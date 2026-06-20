@@ -1,0 +1,23 @@
+# Build artifacts
+build/
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# CMake generated files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+
+# macOS / editor metadata
+.DS_Store
+*.swp
+*.swo
+
+# Local tool settings
+.claude/settings.local.json
