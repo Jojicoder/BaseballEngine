@@ -34,8 +34,13 @@ std::size_t indexForPosition(FieldPosition position) {
 // ── Candidate selectors ───────────────────────────────────────────────────
 
 std::vector<std::size_t> groundCandidateIndices(const BattedBall& ball) {
-    const double spray = ball.sprayAngle;
-    const double d     = radialDistance(ball.landingPoint);
+    const double spray    = ball.sprayAngle;
+    const double landDist = radialDistance(ball.landingPoint);
+    // Use roll-out position for candidate selection: balls landing at 10-30 ft
+    // (very negative LA) roll 60-140 ft into IF territory. Without this, only
+    // Catcher/Pitcher are selected — both fail the depth filter → auto-hit.
+    const double restDist = radialDistance(ball.finalRestPoint);
+    const double d        = std::max(landDist, std::min(restDist, 174.0));
 
     if (d < 22.0) return {indexForPosition(FieldPosition::Catcher)};
     if (d < 34.0) return {indexForPosition(FieldPosition::Catcher),
@@ -136,29 +141,89 @@ bool isPlayableFoulTerritory(const BattedBall& ball) {
 struct FieldingAttempt {
     int fielderId    = -1;
     std::string fielderName;
+    FieldPosition position = FieldPosition::Pitcher;
     Vector3 fieldingPoint;
     double travelTime    = 0.0;
     double availableTime = 0.0;
     double fielding      = 0.0;
 };
 
+struct FieldingTarget {
+    Vector3 point;
+    double availableTime = 0.0;
+};
+
 bool isInfieldGroundPoint(const Vector3& point) {
     return point.y <= 155.0 && radialDistance(point) <= 175.0;
 }
 
-Vector3 groundFieldingTarget(const BattedBall& ball) {
+bool hasFenceIntersection(const BattedBall& ball) {
+    return std::abs(ball.fenceIntersectionPoint.x) > 0.001
+        || std::abs(ball.fenceIntersectionPoint.y) > 0.001
+        || std::abs(ball.fenceIntersectionPoint.z) > 0.001;
+}
+
+FieldingTarget groundFieldingTarget(const BattedBall& ball) {
+    FieldingTarget target;
     if (ball.bounceTrajectory.empty()) {
-        return ball.finalRestPoint;
+        target.point = ball.finalRestPoint;
+        target.availableTime = ball.hangTime;
+        return target;
     }
 
-    Vector3 target = ball.bounceTrajectory.front();
-    for (const Vector3& point : ball.bounceTrajectory) {
+    const double absSpray = std::abs(ball.sprayAngle);
+    const double desiredDepth =
+        absSpray >= 28.0 ? 78.0 :
+        absSpray >= 12.0 ? 98.0 : 112.0;
+    target.point = ball.bounceTrajectory.front();
+    std::size_t targetIndex = 0;
+    for (std::size_t i = 0; i < ball.bounceTrajectory.size(); ++i) {
+        const Vector3& point = ball.bounceTrajectory[i];
         if (!isInfieldGroundPoint(point)) {
             break;
         }
-        target = point;
+        target.point = point;
+        targetIndex = i;
+        if (point.y >= desiredDepth) {
+            break;
+        }
+    }
+    // If the trajectory stopped short of desiredDepth and finalRestPoint is
+    // deeper in the infield, use it — this covers soft-negative-LA grounders
+    // whose bounceTrajectory may end before the ball finishes decelerating.
+    if (target.point.y < desiredDepth && isInfieldGroundPoint(ball.finalRestPoint)
+        && ball.finalRestPoint.y > target.point.y) {
+        target.point = ball.finalRestPoint;
+        targetIndex  = ball.bounceTrajectory.size();
+    }
+    target.availableTime = ball.hangTime + static_cast<double>(targetIndex) * TimeStep;
+    return target;
+}
+
+FieldingTarget outfieldGroundTarget(const BattedBall& ball) {
+    FieldingTarget target;
+    target.point = ball.finalRestPoint;
+    target.availableTime = ball.hangTime
+        + static_cast<double>(ball.bounceTrajectory.size()) * TimeStep;
+
+    if (ball.fenceCrossHeight > 0.0 && !ball.crossesFence && hasFenceIntersection(ball)) {
+        target.point = ball.fenceIntersectionPoint;
+        target.point.z = 0.0;
+        target.availableTime = std::min(target.availableTime, ball.hangTime + 0.55);
     }
     return target;
+}
+
+bool groundBallReachedOutfield(const BattedBall& ball) {
+    return ball.estimatedDistance >= 180.0
+        || ball.finalRestPoint.y >= 190.0
+        || radialDistance(ball.finalRestPoint) >= 210.0
+        || ball.fenceCrossHeight > 0.0;
+}
+
+bool arrivesInTime(const FieldingAttempt& attempt, double slackSeconds) {
+    return attempt.fielderId >= 0
+        && attempt.travelTime <= attempt.availableTime + slackSeconds;
 }
 
 FieldingAttempt evaluateFielding(const DefenseAlignment& defense,
@@ -185,7 +250,7 @@ FieldingAttempt evaluateFielding(const DefenseAlignment& defense,
             case FieldPosition::SecondBase:
             case FieldPosition::ThirdBase:
             case FieldPosition::Shortstop:
-                if (targetDepth > 175.0 || targetRadius > 205.0) continue;
+                if (targetDepth > 195.0 || targetRadius > 220.0) continue;
                 break;
             case FieldPosition::LeftField:
             case FieldPosition::CenterField:
@@ -195,14 +260,50 @@ FieldingAttempt evaluateFielding(const DefenseAlignment& defense,
         }
         const double eff  = std::max(0.35, f.routeEfficiency);
         const double spd  = std::max(1.0,  f.speedFeetPerSecond);
-        const double t    = f.reactionSeconds + distance2d(f.startPosition, target) / (spd * eff);
+        const double acc  = std::max(1.0,  f.accelerationFeetPerSecond2);
+        const double dist = distance2d(f.startPosition, target) / eff;
+        // Kinematic ramp: accelerate to top speed, then cruise.
+        const double tRamp = spd / acc;
+        const double dRamp = 0.5 * spd * tRamp;
+        const double tMove = dist <= dRamp
+            ? std::sqrt(2.0 * dist / acc)
+            : tRamp + (dist - dRamp) / spd;
+
+        // Change-of-direction penalty: fielders pay extra time when the ball requires
+        // them to reverse or sharply redirect their initial momentum burst.
+        // Outfielders: "over the head" requires a drop-step (0.1–0.35s extra).
+        // All fielders: balls hit >90° from optimal charge direction add ~0.15s.
+        double codPenalty = 0.0;
+        const bool isOutfielder = (f.position == FieldPosition::LeftField
+                                || f.position == FieldPosition::CenterField
+                                || f.position == FieldPosition::RightField);
+        if (dist > 8.0) {
+            const double dx = target.x - f.startPosition.x;
+            const double dy = target.y - f.startPosition.y;
+            const double dLen = std::sqrt(dx*dx + dy*dy);
+            if (dLen > 0.1) {
+                // Outfielders' initial read: charge toward home (-y); ball behind = +y delta.
+                // Infielders' initial read: charge toward home plate (-y direction).
+                const double primaryY = isOutfielder ? 1.0 : -1.0;  // initial step direction in y
+                const double dot = (dy / dLen) * primaryY;  // +1=aligned, -1=opposite
+                if (isOutfielder && dot > 0.25) {
+                    // Ball over head: drop-step penalty scales with how far "behind" it is
+                    codPenalty = std::clamp(0.10 + (dot - 0.25) * 0.50, 0.10, 0.38);
+                } else if (dot < -0.2) {
+                    // Ball significantly in opposite direction of initial read
+                    codPenalty = std::clamp(0.05 + (-dot - 0.2) * 0.25, 0.05, 0.20);
+                }
+            }
+        }
+        const double t    = f.reactionSeconds + tMove + codPenalty;
         if (t < bestTravel) {
-            bestTravel       = t;
-            best.fielderId   = f.id;
-            best.fielderName = f.name;
+            bestTravel         = t;
+            best.fielderId     = f.id;
+            best.fielderName   = f.name;
+            best.position      = f.position;
             best.fieldingPoint = target;
-            best.travelTime  = t;
-            best.fielding    = f.fielding;
+            best.travelTime    = t;
+            best.fielding      = f.fielding;
         }
     }
     return best;
@@ -215,6 +316,23 @@ double grounderDifficulty(const BattedBall& ball) {
     // High EV → harder spin, faster approach, trickier hops
     double d = std::clamp((ball.exitVelocity - 80.0) / 35.0, 0.0, 1.0) * 0.55 + 0.08;
     return std::clamp(d, 0.0, 1.0);
+}
+
+// Zone-based ground ball out probability — replaces kinematic timeReach/evReach model.
+// Calibrated to MLB average GB out rate ~74%: primary zone 88-94%, corner zone 68-72%.
+double groundBallOutProb(const BattedBall& ball, const FieldingAttempt& attempt) {
+    const double absSpray = std::abs(ball.sprayAngle);
+    double base;
+    if (absSpray < 8.0)        base = 0.80; // up the middle
+    else if (absSpray < 16.0)  base = 0.74; // SS/2B primary zone
+    else if (absSpray < 24.0)  base = 0.66; // SS/2B edge / 1B/3B primary zone
+    else if (absSpray < 33.0)  base = 0.56; // corner IF zone
+    else                        base = 0.42; // extreme pull: down the line
+    // Hard-hit penalty: EV 82→110 reduces out rate by up to 0.30
+    const double evPenalty  = std::clamp((ball.exitVelocity - 82.0) / 28.0 * 0.30, 0.0, 0.30);
+    // Fielder quality: 0.83 = average MLB IF; ±0.10 fielding → ±3% out rate
+    const double fieldBonus = (attempt.fielding - 0.83) * 0.30;
+    return std::clamp(base - evPenalty + fieldBonus, 0.12, 0.95);
 }
 
 double flyDifficulty(const BattedBall& ball) {
@@ -230,10 +348,28 @@ double flyDifficulty(const BattedBall& ball) {
 }
 
 // ── Catch probability given fielder reached ──────────────────────────────
-// Low fielding + high difficulty → more misplays/errors
-// k=1.5: calibrated to produce ~3-6% error rate on typical plays
+// k scales how much difficulty matters for a given position type.
+// OF: k=1.0 (fewer errors, more "not reached" decisions already handled)
+// IF corner (1B/3B): k=1.2 (react to hard shots, charging plays)
+// IF middle (SS/2B): k=0.9 (elite fielders, higher fielding ratings)
+// P/C: k=1.4 (tough angles, limited range)
 
-double catchProb(double fielding, double difficulty, double k = 1.5) {
+double catchProbForPosition(double fielding, double difficulty, FieldPosition pos) {
+    double k;
+    switch (pos) {
+        case FieldPosition::Shortstop:
+        case FieldPosition::SecondBase:    k = 0.9; break;
+        case FieldPosition::FirstBase:
+        case FieldPosition::ThirdBase:     k = 1.2; break;
+        case FieldPosition::LeftField:
+        case FieldPosition::CenterField:
+        case FieldPosition::RightField:    k = 1.0; break;
+        default:                           k = 1.4; break; // P, C
+    }
+    return std::clamp(1.0 - (1.0 - fielding) * difficulty * k, 0.15, 0.995);
+}
+
+double catchProb(double fielding, double difficulty, double k = 1.1) {
     return std::clamp(1.0 - (1.0 - fielding) * difficulty * k, 0.15, 0.995);
 }
 
@@ -289,6 +425,41 @@ PlayResolution hitResolution(const BattedBall& ball, const FieldingAttempt& atte
 }
 
 } // namespace
+
+// ── Defensive shift ───────────────────────────────────────────────────────
+// Shifts infield/outfield based on batter.pullTendency (50=neutral, high=pull heavy).
+// RHB pull = toward left (x < 0); LHB pull = toward right (x > 0).
+// Shift sign: +1 for LHB pull direction (rightward), -1 for RHB pull direction (leftward).
+DefenseAlignment applyDefensiveShift(DefenseAlignment a, const Player& batter) {
+    const double pull = (batter.pullTendency - 50) / 50.0;   // -1..+1
+    if (std::abs(pull) < 0.08) return a;                      // neutral: no shift
+
+    // For RHB the pull side is left field (negative x); for LHB it is right (positive x).
+    const double pullSign = (batter.battingSide == BattingSide::Right) ? -1.0 : 1.0;
+    const double shiftMag = pull * pullSign;   // + = shift toward RF side, - = toward LF side
+
+    // Infield: SS and 2B slide toward the pull side; 3B/1B stay near the line.
+    // Mild shift (<0.3): SS shades 1-2 steps, 2B shades similarly
+    // Strong shift (>0.5): extreme shift — both SS and 2B move to pull side of 2B bag
+    const double ifShiftFt = shiftMag * 18.0;  // max 18ft lateral shift for extreme pull
+    const double ofShiftFt = shiftMag * 22.0;  // OF shifts more aggressively
+
+    auto& f = a.fielders;
+    // Infield: 2B (index 3) and SS (index 5) shift laterally
+    f[3].startPosition.x += ifShiftFt * 0.6;    // 2B
+    f[5].startPosition.x += ifShiftFt * 0.6;    // SS
+    // 1B and 3B hug lines on extreme shifts
+    if (std::abs(pull) > 0.5) {
+        f[2].startPosition.x += ifShiftFt * 0.2; // 1B shade toward pull side line
+        f[4].startPosition.x += ifShiftFt * 0.2; // 3B shade
+    }
+    // Outfield: LF and RF shift toward pull side; CF plays toward pull alley
+    f[6].startPosition.x += ofShiftFt * 0.5;    // LF
+    f[7].startPosition.x += ofShiftFt * 0.25;   // CF
+    f[8].startPosition.x += ofShiftFt * 0.5;    // RF
+
+    return a;
+}
 
 // ── Standard defense setup ────────────────────────────────────────────────
 // Speeds are in ft/s (= meters(m/s) converts m/s → ft/s).
@@ -390,7 +561,7 @@ PlayResolution PlayResolutionEngine::resolve(const BattedBall& ball,
             FieldingAttempt attempt = evaluateFielding(active, candidates,
                                                        ball.landingPoint,
                                                        ball.hangTime);
-            if (attempt.fielderId >= 0) {
+            if (arrivesInTime(attempt, 0.35)) {
                 return withFielding(PlayOutcomeType::Out, FieldingOutcomeType::Caught,
                                     1, 0, "foul fly out", attempt, true);
             }
@@ -404,35 +575,46 @@ PlayResolution PlayResolutionEngine::resolve(const BattedBall& ball,
     }
 
     const bool groundBall = isGroundBall(ball);
-    const Vector3 target  = groundBall && ball.finalRestPoint.y > 0.0
-                            ? groundFieldingTarget(ball) : ball.landingPoint;
-    const double groundTime = ball.hangTime
-                              + static_cast<double>(ball.bounceTrajectory.size()) * TimeStep;
-    const double availableTime = groundBall
-                                 ? std::max(ball.hangTime, groundTime)
-                                 : ball.hangTime;
+    const FieldingTarget groundTarget = groundBall
+        ? groundFieldingTarget(ball)
+        : FieldingTarget{ball.landingPoint, ball.hangTime};
+    const Vector3 target = groundBall ? groundTarget.point : ball.landingPoint;
+    const double availableTime = groundBall ? groundTarget.availableTime : ball.hangTime;
 
     // ── 1. Ground ball ─────────────────────────────────────────────────────
     if (groundBall) {
         const auto candidates = groundCandidateIndices(ball);
         FieldingAttempt attempt = evaluateFielding(active, candidates, target, availableTime);
+        auto missedGroundBallResolution = [&]() {
+            if (groundBallReachedOutfield(ball)) {
+                const FieldingTarget ofTarget = outfieldGroundTarget(ball);
+                FieldingAttempt ofAttempt = evaluateFielding(active,
+                                                             flyCandidateIndices(ball),
+                                                             ofTarget.point,
+                                                             ofTarget.availableTime);
+                if (ofAttempt.fielderId >= 0) {
+                    return hitResolution(ball, ofAttempt);
+                }
+            }
+            return hitResolution(ball, attempt);
+        };
 
-        if (attempt.fielderId < 0) return hitResolution(ball, attempt);
+        if (attempt.fielderId < 0) return missedGroundBallResolution();
 
         // Ball must be in a "playable zone" for any fielder
         const bool inZone =
             ball.exitVelocity < 112.0
-            && (ball.estimatedDistance < 134.0 || radialDistance(target) < 165.0);
-        if (!inZone) return hitResolution(ball, attempt);
+            && target.y <= 180.0
+            && (ball.estimatedDistance < 160.0 || radialDistance(target) < 186.0);
+        if (!inZone) return missedGroundBallResolution();
 
-        // P(reach): high EV grounders blow past fielder even in zone
-        // EV ≤ 82 → reach ≈ 1.0, EV = 112 → reach ≈ 0.15
-        const double evReach = std::clamp((112.0 - ball.exitVelocity) / 18.0 + 0.15, 0.15, 1.0);
-        if (random.real(0.0, 1.0) >= evReach) return hitResolution(ball, attempt);
+        if (random.real(0.0, 1.0) >= groundBallOutProb(ball, attempt)) {
+            return missedGroundBallResolution();
+        }
 
-        // P(catch | reached)
+        // P(catch | reached): position-specific error rate
         const double diff = grounderDifficulty(ball);
-        const double cp   = catchProb(attempt.fielding, diff);
+        const double cp   = catchProbForPosition(attempt.fielding, diff, attempt.position);
         if (random.real(0.0, 1.0) < cp) {
             return withFielding(PlayOutcomeType::Out, FieldingOutcomeType::FieldedCleanly,
                                 1, 0, "ground out", attempt, true);
@@ -444,26 +626,22 @@ PlayResolution PlayResolutionEngine::resolve(const BattedBall& ball,
     // ── 2a. Infield Fly Rule (launchAngle 25–90°, ≤195 ft, r1B+r2B, <2 outs) ─
     // Rule applies regardless of whether the ball is actually caught.
     // Must be checked before isPopUp so 25–50° range is covered.
+    const auto iffCandidates = popUpCandidateIndices(ball);
+    FieldingAttempt iffAttempt = evaluateFielding(active, iffCandidates, target, availableTime);
+    const bool ordinaryEffort = iffAttempt.fielderId >= 0
+        && iffAttempt.travelTime <= availableTime + 0.45;
     const bool iffCondition = ball.launchAngle >= 25.0
-        && ball.estimatedDistance <= 195.0
+        && ball.estimatedDistance <= 185.0
         && state.outs < 2
         && state.bases[0].has_value()
-        && state.bases[1].has_value();
+        && state.bases[1].has_value()
+        && ordinaryEffort;
 
     if (iffCondition) {
-        const auto ifCandidates = popUpCandidateIndices(ball);
-        FieldingAttempt ifAttempt = evaluateFielding(active, ifCandidates, target, availableTime);
         // Even if no infielder reached (very rare), batter is still automatically out
         PlayResolution r;
-        if (ifAttempt.fielderId >= 0) {
-            r = withFielding(PlayOutcomeType::Out, FieldingOutcomeType::Caught,
-                             1, 0, "infield fly", ifAttempt, true);
-        } else {
-            r.type           = PlayOutcomeType::Out;
-            r.fieldingOutcome = FieldingOutcomeType::Caught;
-            r.outsRecorded   = 1;
-            r.description    = "infield fly";
-        }
+        r = withFielding(PlayOutcomeType::Out, FieldingOutcomeType::Caught,
+                         1, 0, "infield fly", iffAttempt, true);
         r.infieldFly = true;
         return r;
     }
@@ -474,16 +652,16 @@ PlayResolution PlayResolutionEngine::resolve(const BattedBall& ball,
         const auto candidates = popUpCandidateIndices(ball);
         FieldingAttempt attempt = evaluateFielding(active, candidates, target, availableTime);
 
-        if (attempt.fielderId < 0) {
+        if (!arrivesInTime(attempt, 0.45)) {
             const auto ofCandidates = flyCandidateIndices(ball);
             FieldingAttempt ofAttempt = evaluateFielding(active, ofCandidates, target, availableTime);
-            if (ofAttempt.fielderId < 0) return hitResolution(ball, ofAttempt);
+            if (!arrivesInTime(ofAttempt, 0.35)) return hitResolution(ball, ofAttempt);
             return withFielding(PlayOutcomeType::Out, FieldingOutcomeType::Caught,
                                 1, 0, "pop fly out", ofAttempt, true);
         }
 
         const double diff = std::clamp(flyDifficulty(ball) * 0.4, 0.0, 0.4);
-        const double cp   = catchProb(attempt.fielding, diff);
+        const double cp   = catchProbForPosition(attempt.fielding, diff, attempt.position);
         if (random.real(0.0, 1.0) < cp) {
             return withFielding(PlayOutcomeType::Out, FieldingOutcomeType::Caught,
                                 1, 0, "pop fly out", attempt, true);
@@ -492,21 +670,69 @@ PlayResolution PlayResolutionEngine::resolve(const BattedBall& ball,
                             0, 0, "error on pop-up", attempt, false);
     }
 
+    // ── 2c. Bloop / shallow liner / shallow fly ───────────────────────────────
+    // LA 10-31°, estimatedDistance 100-252ft: IF/OF gap territory.
+    // Neither kinematic model can accurately place IF sprinting out 80-150ft
+    // or OF charging in 20-80ft in 1.5-3.5s. Direct probability model instead.
+    // Hang time is the primary physical driver (longer = more time to read and run).
+    // Extended from (218ft, EV<94) to (252ft, EV<102) to capture hard LDs that
+    // previously fell through to OF fly path → auto-hit (no-man's land).
+    const bool isBloop = ball.launchAngle >= 10.0 && ball.launchAngle < 31.0
+                         && ball.estimatedDistance >= 100.0
+                         && ball.estimatedDistance < 252.0
+                         && ball.exitVelocity < 108.0;
+    if (isBloop) {
+        // SS covers pull-side (spray ≤ 0°); 2B covers oppo-side.
+        // For balls 200-252ft, represents whichever IF/OF breaks hardest.
+        const std::size_t miIdx = (ball.sprayAngle <= 0.0)
+                                  ? indexForPosition(FieldPosition::Shortstop)
+                                  : indexForPosition(FieldPosition::SecondBase);
+        const Fielder& mi = active.fielders[miIdx];
+        // distFactor: peak at 155ft (optimal sprint range for SS/2B), falls off to either side
+        const double distFactor = std::clamp(1.0 - std::abs(ball.estimatedDistance - 155.0) / 97.0,
+                                             0.0, 0.62);
+        // Longer hang → fielder has more time to get a read and sprint
+        const double hangBonus  = std::clamp((ball.hangTime - 1.2) / 3.2, 0.0, 0.22);
+        // Hard contact → harder to read trajectory off the bat
+        const double evPenalty  = std::clamp((ball.exitVelocity - 80.0) / 44.0 * 0.18, 0.0, 0.18);
+        const double fieldBonus = (mi.fielding - 0.83) * 0.22;
+        const double catchP     = std::clamp(distFactor + hangBonus - evPenalty + fieldBonus,
+                                             0.0, 0.74);
+        if (random.real(0.0, 1.0) < catchP) {
+            FieldingAttempt bloopAtt;
+            bloopAtt.fielderId     = mi.id;
+            bloopAtt.fielderName   = mi.name;
+            bloopAtt.position      = mi.position;
+            bloopAtt.fielding      = mi.fielding;
+            bloopAtt.travelTime    = ball.hangTime * 0.85;
+            bloopAtt.availableTime = ball.hangTime;
+            bloopAtt.fieldingPoint = ball.landingPoint;
+            return withFielding(PlayOutcomeType::Out, FieldingOutcomeType::Caught,
+                                1, 0, "bloop out", bloopAtt, true);
+        }
+    }
+
     // ── 3. Outfield fly ────────────────────────────────────────────────────
     const auto candidates  = flyCandidateIndices(ball);
     FieldingAttempt attempt = evaluateFielding(active, candidates, target, availableTime);
 
     if (attempt.fielderId < 0) return hitResolution(ball, attempt);
 
-    // Time-based reach probability
-    // Negative margin → ball falls in; positive margin → likely caught
-    const double margin    = availableTime - attempt.travelTime;
-    const double reachProb = 1.0 / (1.0 + std::exp(-10.0 * margin));
+    // Time-based reach probability — sigmoid centered on time margin.
+    // Line drives (LA 10-25°): short hang, hard read, fall in often → no sigmoid offset.
+    // Normal fly balls (LA >25°): shift sigmoid toward "caught" since fielders read these well.
+    const double margin = availableTime - attempt.travelTime;
+    const bool isLineDrive  = ball.launchAngle >= 10.0 && ball.launchAngle < 25.0;
+    // Shallow fly (LA 31-46°, dist < 200ft): OF charges in aggressively — easier than normal fly
+    const bool isShallowFly = ball.launchAngle >= 31.0 && ball.launchAngle < 46.0
+                              && ball.estimatedDistance < 200.0;
+    const double sigOffset = isLineDrive ? 0.0 : (isShallowFly ? 0.8 : 0.4);
+    const double reachProb = 1.0 / (1.0 + std::exp(-5.0 * (margin + sigOffset)));
     if (random.real(0.0, 1.0) >= reachProb) return hitResolution(ball, attempt);
 
     // P(catch | reached): line drives and hard hits stress even good OF
     const double diff = flyDifficulty(ball);
-    const double cp   = catchProb(attempt.fielding, diff);
+    const double cp   = catchProbForPosition(attempt.fielding, diff, attempt.position);
     if (random.real(0.0, 1.0) < cp) {
         return withFielding(PlayOutcomeType::Out, FieldingOutcomeType::Caught,
                             1, 0, "fly out", attempt, true);
@@ -516,9 +742,11 @@ PlayResolution PlayResolutionEngine::resolve(const BattedBall& ball,
 }
 
 bool PlayResolutionEngine::isGroundBall(const BattedBall& ball) {
-    return ball.launchAngle < 5.0
+    // LA < 10° includes "low liners" that stay in the infield — route through IF zone model
+    return ball.launchAngle < 10.0
         || ball.classification == "ground ball"
-        || ball.classification == "hard ground ball";
+        || ball.classification == "hard ground ball"
+        || ball.classification == "low liner";
 }
 
 std::string toString(PlayOutcomeType type) {

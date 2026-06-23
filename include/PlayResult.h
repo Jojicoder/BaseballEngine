@@ -1,6 +1,9 @@
 #pragma once
 
+#include "AnimationTypes.h"
+
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace joji {
@@ -26,7 +29,8 @@ enum class AtBatResultType {
     SacrificeBunt,      // 犠打: 打者アウト、走者進塁、AB なし
     SqueezeBunt,        // スクイズ: 3B走者生還、打者アウト、AB なし
     BuntSingle,         // バント安打: 打者1B出塁
-    BuntFielderChoice   // バントFC: 守備が先の走者を狙い打者1B出塁
+    BuntFielderChoice,  // バントFC: 守備が先の走者を狙い打者1B出塁
+    HitByPitch          // 死球: 打者1B出塁、AB なし
 };
 
 // 守備側がどう処理したか (PlayOutcomeType とは独立)
@@ -64,9 +68,41 @@ struct BattedBall {
 
 // What throw(s) the fielder made — set by applyPlay(), used by ThrowAnimation
 struct ThrowDecision {
+    ThrowDecision() = default;
+    ThrowDecision(int target, bool isDoublePlay, std::vector<int> sequence)
+        : targetBase(target)
+        , doublePlay(isDoublePlay)
+        , targetSequence(std::move(sequence)) {}
+
     int  targetBase = 0;    // 0=no throw, 1=1B, 2=2B, 3=3B, 4=home
     bool doublePlay = false; // true → first throw to 2B, then 2B→1B
+    bool useCutoff = false;
+    std::string cutoffFielderName;
+    Vector3 cutoffPoint;
+    double throwAccuracy = 1.0;
+    bool badThrow = false;
+    double offlineFeet = 0.0;
+    double arrivalDelaySeconds = 0.0;
     std::vector<int> targetSequence; // ordered force/out bases, e.g. {3,2,1}
+};
+
+struct ThrowOption {
+    int targetBase = 0;
+    double ballArrivalTime = 0.0;
+    double runnerArrivalTime = 0.0;
+    double outProbability = 0.0;
+    double runRisk = 0.0;
+    double extraBaseRisk = 0.0;
+    double accuracy = 1.0;
+    double badThrowRisk = 0.0;
+};
+
+struct DefensiveDecision {
+    int chosenTargetBase = 0;
+    std::string reason;
+    bool holdBall = true;
+    bool cutoff = false;
+    std::vector<ThrowOption> options;
 };
 
 struct RunnerOut {
@@ -91,7 +127,12 @@ struct PlayResult {
     int outsRecorded = 0;
     BattedBall battedBall;
     ThrowDecision throwDecision;
+    DefensiveDecision defensiveDecision;
+    bool throwingError = false;
+    std::string throwingErrorFielderName;
+    bool badThrowExtraBase = false;
     std::vector<RunnerOut> runnerOuts;
+    std::vector<TagPlay> tagPlays;
     std::vector<std::string> events;
     bool infieldFly = false;
 };

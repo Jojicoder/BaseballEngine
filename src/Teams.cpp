@@ -1,4 +1,5 @@
 #include "Teams.h"
+#include "PlayResolutionEngine.h"
 
 namespace joji {
 
@@ -6,204 +7,424 @@ namespace {
 
 using P  = Position;
 using PR = PitcherRole;
+using PL = PlayerRole;
 using TH = ThrowingHand;
 using BS = BattingSide;
+using PT = PitchType;
 
-Player batter(std::string name, P position,
+// ── Fluent helpers ────────────────────────────────────────────────────────────
+
+Player withArsenal(Player p, std::vector<PitchGrade> a) {
+    p.arsenal = std::move(a);
+    return p;
+}
+
+Player withTend(Player p, int pull, int hb, int chase, int cvb) {
+    p.pullTendency = pull; p.highBallHitter = hb;
+    p.chaseRate = chase;   p.contactVsBreaking = cvb;
+    return p;
+}
+
+Player withRole(Player p, PL role) {
+    p.role = role;
+    return p;
+}
+
+// batter: fielding stats (pitching fields left at defaults)
+Player batter(std::string name, P pos,
               int contact, int power, int eye, int speed, int fielding, int arm,
-              int pitchingVelocity, int pitchingControl, int pitchingStuff,
-              BS battingSide,
-              TH throwingHand = TH::Right) {
-    Player player{name, position, contact, power, eye, speed, fielding, arm,
-                  pitchingVelocity, pitchingControl, pitchingStuff};
-    player.battingSide = battingSide;
-    player.throwingHand = throwingHand;
-    return player;
+              BS side = BS::Right, TH hand = TH::Right) {
+    Player p;
+    p.name = std::move(name); p.position = pos;
+    p.contact = contact; p.power = power; p.eye = eye; p.speed = speed;
+    p.fielding = fielding; p.arm = arm;
+    p.battingSide = side; p.throwingHand = hand;
+    return p;
 }
 
-Player pitcher(std::string name, int contact, int power, int eye, int speed,
-               int fielding, int arm, int pitchingVelocity, int pitchingControl,
-               int pitchingStuff, int pitchingStamina, PR role,
-               TH throwingHand = TH::Right) {
-    Player player{name, P::Pitcher, contact, power, eye, speed, fielding, arm,
-                  pitchingVelocity, pitchingControl, pitchingStuff, pitchingStamina,
-                  role};
-    player.throwingHand = throwingHand;
-    return player;
+// pitcher: pitching stats (batting fields left at 50 or set by hand)
+Player pitcher(std::string name, int vel, int ctrl, int stuff, int stamina,
+               PR role, TH hand = TH::Right) {
+    Player p;
+    p.name = std::move(name); p.position = P::Pitcher;
+    p.pitchingVelocity = vel; p.pitchingControl = ctrl;
+    p.pitchingStuff = stuff; p.pitchingStamina = stamina;
+    p.pitcherRole = role; p.throwingHand = hand;
+    // Pitchers have minimal batting stats
+    p.contact = 42; p.power = 40; p.eye = 40; p.speed = 40;
+    p.fielding = 52; p.arm = 58;
+    return p;
 }
 
-// ────────────────────────────────────────────
-// Newark Knights — バランス型
-// ────────────────────────────────────────────
+// ── Newark Knights ────────────────────────────────────────────────────────────
+// チームカラー: スピード&コンタクト型。足で点を取る。先発ローテが安定。
 Team newarkKnights() {
     return Team{
         "Newark Knights",
-        {   // 打者8人 (contact power eye speed fielding arm pV pC pS pSta)
-            // power>=75:-2 / 65-74:-1 / <65:0
-            batter("Joji Rivera",   P::CenterField, 77, 66, 70, 74, 61, 55, 35, 34, 32, BS::Left),  // 67-1
-            {"Marcus Bell",   P::LeftField,   71, 73, 60, 62, 70, 67, 30, 30, 30},  // 74-1
-            {"Andre Vale",    P::FirstBase,   66, 83, 56, 48, 58, 60, 36, 35, 34},  // 85-2
-            {"Nico Sterling", P::ThirdBase,   79, 60, 72, 69, 64, 58, 28, 32, 29},  // 60 nc
-            batter("Dante Cruz",    P::RightField,  67, 77, 54, 55, 66, 72, 34, 31, 30, BS::Left),  // 79-2
-            {"Eli Brooks",    P::Shortstop,   68, 64, 64, 71, 73, 64, 30, 31, 29},  // 64 nc
-            {"Tariq Mason",   P::SecondBase,  65, 70, 57, 59, 62, 76, 32, 30, 31},  // 71-1
-            {"Cal Weston",    P::Catcher,     65, 55, 67, 63, 69, 57, 35, 38, 36},  // 55 nc
-        },
-        pitcher("Rafael Stone", 43, 45, 42, 39, 52, 61, 78, 69, 73, 68, PR::Starter),
+        // ── lineup (8人) ─────────────────────────────────────────────────────
         {
-            {"Derek Hahn",   P::Pitcher, 40, 40, 40, 38, 50, 58, 72, 64, 68, 62, PR::LongRelief},
-            {"Sam Price",    P::Pitcher, 40, 40, 40, 38, 50, 58, 75, 60, 70, 58, PR::MiddleRelief},
-            pitcher("Luis Cano", 40, 40, 40, 38, 50, 56, 70, 63, 65, 55, PR::MiddleRelief, TH::Left),
-            {"Tony Marsh",   P::Pitcher, 40, 40, 40, 38, 50, 60, 78, 62, 74, 60, PR::Setup},
-            {"Kyle Reid",    P::Pitcher, 40, 40, 40, 38, 50, 60, 82, 65, 76, 58, PR::Closer},
-        }
+            // 1. Joji Rivera  CF  リードオフ: contact/eye/speed の塊
+            withRole(withTend(batter("Joji Rivera",  P::CenterField, 78,62,74,82,72,58, BS::Left),  44,56,36,64), PL::Leadoff),
+            // 2. Marcus Bell  LF  コンタクト型: gap power、打率.290 クラス
+            withRole(withTend(batter("Marcus Bell",  P::LeftField,   74,68,64,66,70,65),             58,48,52,48), PL::ContactHitter),
+            // 3. Andre Vale   1B  クリーンアップ候補: power 特化、三振多め
+            withRole(withTend(batter("Andre Vale",   P::FirstBase,   66,84,58,46,62,60, BS::Left),  70,44,66,36), PL::CornerIF),
+            // 4. Nico Sterling 3B  バランス: 中距離パワー + fielding
+            withRole(withTend(batter("Nico Sterling",P::ThirdBase,   80,62,72,68,68,62),             40,54,32,64), PL::CornerIF),
+            // 5. Dante Cruz   RF  ミドルパワー、ゴーアヘッドヒット型
+            withRole(withTend(batter("Dante Cruz",   P::RightField,  68,76,56,58,66,70, BS::Left),  66,46,60,44), PL::CornerOF),
+            // 6. Eli Brooks   SS  守備型ショート: fielding/arm 高め
+            withRole(withTend(batter("Eli Brooks",   P::Shortstop,   68,54,66,74,80,76),             48,52,44,56), PL::MiddleIF),
+            // 7. Tariq Mason  2B  つなぎ: eye 高め、足でかき回す
+            withRole(withTend(batter("Tariq Mason",  P::SecondBase,  66,58,70,76,74,66),             54,50,46,56), PL::MiddleIF),
+            // 8. Cal Weston   C   強肩捕手: arm 特化、打撃は控えめ
+            withRole(withTend(batter("Cal Weston",   P::Catcher,     62,54,64,52,72,80),             42,58,38,60), PL::Catcher),
+        },
+        // ── rotation (5人) ───────────────────────────────────────────────────
+        {
+            // Ace: コントロール型、奪三振より打ち取る
+            withRole(withArsenal(pitcher("Rafael Stone",  80,74,78,76, PR::Starter),
+                {{PT::Fastball,74},{PT::Slider,72},{PT::Changeup,66},{PT::Curveball,58}}), PL::Ace),
+            // #2: 左腕フライボール系
+            withRole(withArsenal(pitcher("Luis Cano",     76,72,76,72, PR::Starter, TH::Left),
+                {{PT::Fastball,68},{PT::Curveball,74},{PT::Changeup,68},{PT::Slider,58}}), PL::Starter),
+            // #3: ゴロ系右腕、制球重視
+            withRole(withArsenal(pitcher("Derek Hahn",    72,76,68,70, PR::Starter),
+                {{PT::Fastball,64},{PT::Cutter,72},{PT::Changeup,64},{PT::Curveball,54}}), PL::Starter),
+            // #4: パワー系リリーフから転向、スタミナ低め
+            withRole(withArsenal(pitcher("Sam Price",     74,64,72,62, PR::Starter),
+                {{PT::Fastball,68},{PT::Slider,66},{PT::Changeup,54}}), PL::BackOfRotation),
+            // #5: 若手右腕、制球に課題
+            withRole(withArsenal(pitcher("Cole Brady",    70,60,66,64, PR::Starter),
+                {{PT::Fastball,62},{PT::Curveball,60},{PT::Changeup,56}}), PL::BackOfRotation),
+        },
+        // ── bullpen (8人) ────────────────────────────────────────────────────
+        {
+            withRole(withArsenal(pitcher("Kyle Reid",   84,66,82,46, PR::Closer),
+                {{PT::Fastball,76},{PT::Slider,74}}), PL::Closer),
+            withRole(withArsenal(pitcher("Tony Marsh",  80,68,78,52, PR::Setup),
+                {{PT::Fastball,70},{PT::Slider,68},{PT::Cutter,62}}), PL::Setup),
+            withRole(withArsenal(pitcher("Jared Voss",  78,66,74,54, PR::Setup),
+                {{PT::Fastball,68},{PT::Curveball,66},{PT::Changeup,58}}), PL::Setup),
+            withRole(withArsenal(pitcher("Matt Oiler",  74,64,70,60, PR::MiddleRelief),
+                {{PT::Fastball,64},{PT::Slider,62}}), PL::MiddleRelief),
+            withRole(withArsenal(pitcher("Remy Cruz",   72,66,68,62, PR::MiddleRelief),
+                {{PT::Fastball,62},{PT::Changeup,64},{PT::Cutter,58}}), PL::MiddleRelief),
+            withRole(withArsenal(pitcher("Owen Park",   68,70,64,74, PR::LongRelief),
+                {{PT::Fastball,60},{PT::Curveball,62},{PT::Changeup,60}}), PL::LongRelief),
+            withRole(withArsenal(pitcher("Felix Lara",  70,68,66,50, PR::MiddleRelief, TH::Left),
+                {{PT::Fastball,60},{PT::Changeup,68},{PT::Curveball,62}}), PL::Specialist),
+            withRole(withArsenal(pitcher("Brock Shaw",  72,64,68,66, PR::LongRelief),
+                {{PT::Fastball,62},{PT::Slider,60},{PT::Changeup,56}}), PL::LongRelief),
+        },
+        // ── bench (5人) ──────────────────────────────────────────────────────
+        {
+            // 控えC: arm 強め
+            withRole(withTend(batter("Ray Santos",  P::Catcher,    56,50,60,46,68,78, BS::Left),  44,52,40,56), PL::BackupCatcher),
+            // ユーティリティINF: SS/2B/3B どこでも守れる
+            withRole(withTend(batter("Lou Ferris",  P::SecondBase, 62,54,62,68,76,72),             50,50,46,54), PL::UtilityIF),
+            // 4th OF: 守備交代・代走
+            withRole(withTend(batter("Kent Blair",  P::CenterField,60,50,58,78,72,60, BS::Switch), 48,52,44,52), PL::ExtraOF),
+            // 代打専門: contact/eye 高め
+            withRole(withTend(batter("Pete Cruz",   P::LeftField,  72,60,70,46,50,52, BS::Left),   58,50,42,62), PL::PinchHitter),
+            // スペアベンチ: パワー系代打
+            withRole(withTend(batter("Walt Rooney", P::FirstBase,  58,72,54,44,56,58),             68,44,64,40), PL::PinchHitter),
+        },
+        BallparkConfig::knightsField()
     };
 }
 
-// ────────────────────────────────────────────
-// Queens Titans — パワー型
-// ────────────────────────────────────────────
+// ── Queens Titans ─────────────────────────────────────────────────────────────
+// チームカラー: パワー打線。本塁打で点を取る。投手陣は平均的。
 Team queensTitans() {
     return Team{
         "Queens Titans",
         {
-            batter("Malik Chen",   P::CenterField, 74, 61, 73, 77, 68, 59, 32, 31, 30, BS::Switch),  // 61 nc
-            {"Oscar Vega",   P::LeftField,   69, 74, 59, 61, 63, 66, 34, 34, 31},  // 76-2
-            {"Theo Grant",   P::FirstBase,   75, 77, 65, 52, 57, 62, 35, 32, 33},  // 79-2
-            batter("Julian Frost", P::RightField,  64, 81, 53, 46, 54, 60, 36, 34, 35, BS::Left),  // 83-2
-            {"Samir Holt",   P::ThirdBase,   75, 63, 69, 68, 71, 63, 29, 31, 30},  // 63 nc
-            {"Isaac Monroe", P::Shortstop,   64, 71, 57, 57, 65, 74, 31, 32, 32},  // 72-1
-            {"Leo Navarro",  P::SecondBase,  62, 65, 62, 72, 76, 69, 33, 34, 30},  // 66-1
-            {"Miles Archer", P::Catcher,     70, 57, 66, 66, 67, 58, 32, 35, 34},  // 57 nc
+            withRole(withTend(batter("Malik Chen",   P::CenterField, 76,62,74,78,70,58, BS::Switch), 46,52,34,60), PL::Leadoff),
+            withRole(withTend(batter("Oscar Vega",   P::LeftField,   70,72,62,64,64,66),             62,46,58,44), PL::ContactHitter),
+            withRole(withTend(batter("Theo Grant",   P::FirstBase,   72,80,66,48,60,58),             68,46,60,42), PL::CornerIF),
+            withRole(withTend(batter("Julian Frost", P::RightField,  64,88,54,44,56,60, BS::Left),   74,42,68,36), PL::PowerHitter),
+            withRole(withTend(batter("Samir Holt",   P::ThirdBase,   74,66,70,66,72,64),             44,56,36,62), PL::CornerIF),
+            withRole(withTend(batter("Isaac Monroe",  P::Shortstop,  64,66,60,60,70,76),             58,48,54,48), PL::MiddleIF),
+            withRole(withTend(batter("Leo Navarro",  P::SecondBase,  62,60,64,72,76,68),             52,50,50,52), PL::MiddleIF),
+            withRole(withTend(batter("Miles Archer", P::Catcher,     68,58,66,54,70,78),             44,56,38,60), PL::Catcher),
         },
-        pitcher("Victor Hale", 41, 48, 45, 38, 50, 64, 82, 56, 77, 55, PR::Starter, TH::Left),
         {
-            {"Will Donner",  P::Pitcher, 40, 40, 40, 38, 50, 58, 70, 62, 67, 60, PR::LongRelief},
-            {"Omar Diaz",    P::Pitcher, 40, 40, 40, 38, 50, 58, 73, 58, 68, 57, PR::MiddleRelief},
-            {"Jake Thorn",   P::Pitcher, 40, 40, 40, 38, 50, 56, 71, 61, 66, 55, PR::MiddleRelief},
-            {"Pete Crane",   P::Pitcher, 40, 40, 40, 38, 50, 60, 77, 61, 73, 60, PR::Setup},
-            {"Ray Fox",      P::Pitcher, 40, 40, 40, 38, 50, 60, 83, 62, 78, 55, PR::Closer},
-        }
+            withRole(withArsenal(pitcher("Victor Hale", 84,62,82,72, PR::Starter, TH::Left),
+                {{PT::Fastball,78},{PT::Curveball,74},{PT::Changeup,68},{PT::Slider,62}}), PL::Ace),
+            withRole(withArsenal(pitcher("Deon Clarke", 78,68,74,68, PR::Starter),
+                {{PT::Fastball,70},{PT::Slider,68},{PT::Changeup,62}}), PL::Starter),
+            withRole(withArsenal(pitcher("Hal Morris",  74,70,68,66, PR::Starter),
+                {{PT::Fastball,64},{PT::Curveball,66},{PT::Changeup,60}}), PL::Starter),
+            withRole(withArsenal(pitcher("Al Ruiz",     70,64,64,62, PR::Starter),
+                {{PT::Fastball,60},{PT::Slider,62},{PT::Changeup,56}}), PL::BackOfRotation),
+            withRole(withArsenal(pitcher("Bo Tanner",   68,62,62,60, PR::Starter),
+                {{PT::Fastball,58},{PT::Changeup,60},{PT::Curveball,54}}), PL::BackOfRotation),
+        },
+        {
+            withRole(withArsenal(pitcher("Ray Fox",    86,62,84,44, PR::Closer),
+                {{PT::Fastball,78},{PT::Slider,76}}), PL::Closer),
+            withRole(withArsenal(pitcher("Pete Crane", 80,66,76,52, PR::Setup),
+                {{PT::Fastball,68},{PT::Slider,66},{PT::Cutter,60}}), PL::Setup),
+            withRole(withArsenal(pitcher("Gio Ware",   78,64,72,54, PR::Setup),
+                {{PT::Fastball,66},{PT::Changeup,64},{PT::Slider,60}}), PL::Setup),
+            withRole(withArsenal(pitcher("Jake Thorn", 74,62,68,60, PR::MiddleRelief),
+                {{PT::Fastball,62},{PT::Curveball,62},{PT::Changeup,56}}), PL::MiddleRelief),
+            withRole(withArsenal(pitcher("Omar Diaz",  72,64,66,62, PR::MiddleRelief),
+                {{PT::Fastball,62},{PT::Slider,60}}), PL::MiddleRelief),
+            withRole(withArsenal(pitcher("Will Donner",68,68,62,72, PR::LongRelief),
+                {{PT::Fastball,58},{PT::Changeup,62},{PT::Slider,56}}), PL::LongRelief),
+            withRole(withArsenal(pitcher("Ken Shea",   72,66,64,52, PR::MiddleRelief, TH::Left),
+                {{PT::Fastball,60},{PT::Curveball,64},{PT::Changeup,60}}), PL::Specialist),
+            withRole(withArsenal(pitcher("Ned Lowe",   70,64,64,66, PR::LongRelief),
+                {{PT::Fastball,60},{PT::Slider,58},{PT::Changeup,54}}), PL::LongRelief),
+        },
+        {
+            withRole(withTend(batter("Curt Ellis",  P::Catcher,    54,52,58,48,66,76, BS::Left), 42,54,36,58), PL::BackupCatcher),
+            withRole(withTend(batter("Ben Lowe",    P::ThirdBase,  60,68,58,56,68,66),            62,46,56,46), PL::UtilityIF),
+            withRole(withTend(batter("Wade Pryor",  P::LeftField,  58,60,60,68,66,58),            52,50,50,50), PL::ExtraOF),
+            withRole(withTend(batter("Tate Hall",   P::FirstBase,  68,66,64,44,52,54),            66,46,60,42), PL::PinchHitter),
+            withRole(withTend(batter("Duke Nolan",  P::RightField, 62,72,54,50,56,60, BS::Left), 70,42,66,38), PL::PinchHitter),
+        },
+        BallparkConfig::queensColiseum()
     };
 }
 
-// ────────────────────────────────────────────
-// Brooklyn Hammers — 強打型
-// ────────────────────────────────────────────
+// ── Brooklyn Hammers ──────────────────────────────────────────────────────────
+// チームカラー: 強打線。リーグ最高クラスの得点力。
 Team brooklynHammers() {
     return Team{
         "Brooklyn Hammers",
         {
-            batter("Devon Harris",  P::CenterField, 71, 70, 60, 74, 62, 58, 32, 30, 31, BS::Switch),  // 71-1
-            {"Marcus Slade",  P::LeftField,   69, 72, 56, 60, 65, 66, 30, 30, 30},  // 73-1
-            batter("Ray Coleman",   P::FirstBase,   66, 77, 52, 42, 58, 60, 34, 33, 32, BS::Left),  // 79-2
-            {"Troy Banks",    P::RightField,  67, 73, 54, 54, 64, 72, 32, 31, 30},  // 75-2
-            {"Kyle Jensen",   P::ThirdBase,   73, 70, 58, 64, 62, 60, 28, 30, 29},  // 71-1
-            {"Felix Mora",    P::Shortstop,   70, 67, 62, 70, 72, 66, 30, 29, 28},  // 68-1
-            {"Craig Dunn",    P::SecondBase,  65, 66, 58, 62, 68, 58, 31, 30, 29},  // 67-1
-            {"Walt Rivera",   P::Catcher,     63, 63, 56, 54, 70, 64, 32, 34, 31},  // 63 nc
+            withRole(withTend(batter("Devon Harris", P::CenterField, 74,66,66,76,68,62, BS::Switch), 56,50,50,50), PL::Leadoff),
+            withRole(withTend(batter("Owen Shaw",    P::LeftField,   74,76,70,58,62,64, BS::Left),   60,52,44,60), PL::PowerHitter),
+            withRole(withTend(batter("Ray Coleman",  P::FirstBase,   68,78,60,42,60,60, BS::Left),   70,44,66,38), PL::CornerIF),
+            withRole(withTend(batter("Troy Banks",   P::RightField,  72,76,60,54,66,72),             66,46,60,44), PL::CornerOF),
+            withRole(withTend(batter("Kyle Jensen",  P::ThirdBase,   74,72,62,62,64,62),             58,52,52,50), PL::CornerIF),
+            withRole(withTend(batter("Felix Mora",   P::Shortstop,   72,60,64,70,74,68),             52,50,48,54), PL::MiddleIF),
+            withRole(withTend(batter("Craig Dunn",   P::SecondBase,  66,62,62,64,70,60),             54,50,50,50), PL::MiddleIF),
+            withRole(withTend(batter("Reggie Walsh", P::Catcher,     66,64,66,50,74,80, BS::Left),   44,56,36,62), PL::Catcher),
         },
-        {"Sam Holt",      P::Pitcher, 42, 44, 40, 38, 50, 60, 82, 64, 76, 60, PR::Starter},
         {
-            {"Dan Cross",    P::Pitcher, 40, 40, 40, 38, 50, 58, 74, 58, 70, 60, PR::LongRelief},
-            {"Ty Burns",     P::Pitcher, 40, 40, 40, 38, 50, 58, 76, 56, 72, 57, PR::MiddleRelief},
-            {"Vic Shaw",     P::Pitcher, 40, 40, 40, 38, 50, 56, 72, 60, 68, 55, PR::MiddleRelief},
-            {"Liam Nox",     P::Pitcher, 40, 40, 40, 38, 50, 60, 80, 58, 76, 58, PR::Setup},
-            {"Joe Blaze",    P::Pitcher, 40, 40, 40, 38, 50, 60, 85, 60, 80, 56, PR::Closer},
-        }
+            withRole(withArsenal(pitcher("Cole Maddox", 82,70,82,76, PR::Starter),
+                {{PT::Fastball,76},{PT::Slider,74},{PT::Curveball,66},{PT::Changeup,62}}), PL::Ace),
+            withRole(withArsenal(pitcher("Kai Tanaka",  76,70,76,72, PR::Starter),
+                {{PT::Fastball,70},{PT::Cutter,68},{PT::Changeup,66},{PT::Slider,60}}), PL::Starter),
+            withRole(withArsenal(pitcher("Ed Foley",    76,74,72,70, PR::Starter),
+                {{PT::Fastball,68},{PT::Curveball,70},{PT::Changeup,64}}), PL::Starter),
+            withRole(withArsenal(pitcher("Trey Holt",   72,66,68,66, PR::Starter),
+                {{PT::Fastball,64},{PT::Slider,64},{PT::Changeup,58}}), PL::BackOfRotation),
+            withRole(withArsenal(pitcher("Vin Cross",   70,64,64,62, PR::Starter),
+                {{PT::Fastball,60},{PT::Curveball,62},{PT::Changeup,56}}), PL::BackOfRotation),
+        },
+        {
+            withRole(withArsenal(pitcher("Sal Reyes",  86,64,84,44, PR::Closer),
+                {{PT::Fastball,78},{PT::Slider,76},{PT::Cutter,66}}), PL::Closer),
+            withRole(withArsenal(pitcher("Don Wells",  82,66,80,50, PR::Setup),
+                {{PT::Fastball,72},{PT::Slider,70},{PT::Changeup,60}}), PL::Setup),
+            withRole(withArsenal(pitcher("Bret Nye",   80,68,76,52, PR::Setup),
+                {{PT::Fastball,70},{PT::Cutter,68},{PT::Curveball,62}}), PL::Setup),
+            withRole(withArsenal(pitcher("Kirk Soto",  76,64,70,60, PR::MiddleRelief),
+                {{PT::Fastball,64},{PT::Slider,64},{PT::Changeup,56}}), PL::MiddleRelief),
+            withRole(withArsenal(pitcher("Dale Penn",  74,66,68,62, PR::MiddleRelief),
+                {{PT::Fastball,62},{PT::Curveball,64},{PT::Changeup,58}}), PL::MiddleRelief),
+            withRole(withArsenal(pitcher("Art Beal",   70,70,64,74, PR::LongRelief),
+                {{PT::Fastball,60},{PT::Changeup,64},{PT::Curveball,60}}), PL::LongRelief),
+            withRole(withArsenal(pitcher("Hank Grim",  72,68,64,52, PR::MiddleRelief, TH::Left),
+                {{PT::Fastball,60},{PT::Curveball,66},{PT::Changeup,62}}), PL::Specialist),
+            withRole(withArsenal(pitcher("Rob Dunn",   72,64,66,66, PR::LongRelief),
+                {{PT::Fastball,62},{PT::Slider,60},{PT::Changeup,56}}), PL::LongRelief),
+        },
+        {
+            withRole(withTend(batter("Marc Cole",   P::Catcher,    58,52,60,48,68,76),             42,56,38,58), PL::BackupCatcher),
+            withRole(withTend(batter("Zach Olin",   P::Shortstop,  62,54,62,70,76,72),             50,50,46,54), PL::UtilityIF),
+            withRole(withTend(batter("Deon Gray",   P::RightField, 64,58,60,74,68,60, BS::Left),   48,52,44,52), PL::ExtraOF),
+            withRole(withTend(batter("Chris Webb",  P::FirstBase,  70,68,66,46,54,56, BS::Left),   64,48,58,44), PL::PinchHitter),
+            withRole(withTend(batter("Hugo Nava",   P::LeftField,  64,74,58,52,54,58),             70,44,64,40), PL::PinchHitter),
+        },
+        BallparkConfig::ironYard()
     };
 }
 
-// ────────────────────────────────────────────
-// Harlem Eagles — 巧打・機動型
-// ────────────────────────────────────────────
-Team harlemEagles() {
-    return Team{
-        "Harlem Eagles",
-        {
-            batter("Jamal West",    P::CenterField, 81, 64, 74, 84, 70, 58, 30, 30, 30, BS::Left),  // 64 nc
-            {"Darius King",   P::LeftField,   77, 66, 72, 76, 68, 62, 30, 29, 29},  // 67-1
-            batter("Tomas Ruiz",    P::RightField,  75, 72, 68, 68, 66, 68, 31, 30, 30, BS::Switch),  // 73-1
-            {"Aaron Miles",   P::ThirdBase,   73, 70, 68, 64, 64, 62, 29, 30, 28},  // 71-1
-            {"Carlos Webb",   P::FirstBase,   71, 75, 64, 52, 60, 56, 33, 32, 31},  // 77-2
-            {"Kevin Nash",    P::Shortstop,   71, 64, 66, 74, 74, 68, 30, 31, 29},  // 65-1
-            {"Pete Owens",    P::SecondBase,  68, 63, 64, 72, 70, 60, 31, 30, 29},  // 63 nc
-            {"Sam Ford",      P::Catcher,     66, 61, 60, 58, 68, 62, 32, 34, 31},  // 61 nc
-        },
-        pitcher("Hector Vega", 42, 44, 42, 40, 52, 60, 76, 70, 72, 72, PR::Starter, TH::Left),
-        {
-            {"Al Bryce",     P::Pitcher, 40, 40, 40, 38, 50, 58, 72, 66, 68, 64, PR::LongRelief},
-            {"Rico Penn",    P::Pitcher, 40, 40, 40, 38, 50, 58, 74, 64, 70, 60, PR::MiddleRelief},
-            {"Sam Kerr",     P::Pitcher, 40, 40, 40, 38, 50, 56, 70, 65, 67, 60, PR::MiddleRelief},
-            {"Don Reese",    P::Pitcher, 40, 40, 40, 38, 50, 60, 76, 67, 72, 62, PR::Setup},
-            {"Cal Storm",    P::Pitcher, 40, 40, 40, 38, 50, 60, 80, 68, 76, 60, PR::Closer},
-        }
-    };
-}
-
-// ────────────────────────────────────────────
-// Bronx Wolves — 投高打低型
-// ────────────────────────────────────────────
+// ── Bronx Wolves ──────────────────────────────────────────────────────────────
+// チームカラー: リーグ最強の総合力。エース+強打線+守備が高水準。
 Team bronxWolves() {
     return Team{
         "Bronx Wolves",
         {
-            batter("Damon Price",   P::CenterField, 79, 63, 70, 82, 68, 60, 30, 30, 29, BS::Left),  // 63 nc
-            {"Reggie Walsh",  P::LeftField,   77, 66, 68, 74, 66, 64, 30, 29, 30},  // 67-1
-            batter("Owen Shaw",     P::FirstBase,   75, 74, 64, 58, 60, 56, 32, 31, 31, BS::Switch),  // 76-2
-            {"Ben Frost",     P::RightField,  73, 73, 62, 66, 62, 68, 31, 30, 30},  // 74-1
-            {"Marco Reyes",   P::ThirdBase,   75, 69, 66, 72, 66, 64, 29, 30, 28},  // 70-1
-            {"Tyler Cross",   P::Shortstop,   73, 63, 64, 76, 72, 66, 30, 31, 29},  // 63 nc
-            {"Nick Vega",     P::SecondBase,  71, 64, 62, 72, 68, 60, 30, 30, 30},  // 65-1
-            {"Al Duncan",     P::Catcher,     69, 61, 62, 60, 70, 64, 31, 33, 30},  // 61 nc
+            withRole(withTend(batter("Tomas Ruiz",  P::LeftField,   74,78,70,68,66,64, BS::Left),   62,52,46,58), PL::PowerHitter),
+            withRole(withTend(batter("Jamal West",  P::CenterField, 74,66,72,80,74,62, BS::Switch),  50,52,40,62), PL::Leadoff),
+            withRole(withTend(batter("Nick Stone",  P::FirstBase,   70,74,66,50,64,62, BS::Left),   66,46,60,44), PL::CornerIF),
+            withRole(withTend(batter("Darius Knox", P::RightField,  68,72,64,58,68,72),             62,50,56,48), PL::CornerOF),
+            withRole(withTend(batter("Brett Walsh", P::ThirdBase,   72,68,66,60,68,64),             56,52,48,56), PL::CornerIF),
+            withRole(withTend(batter("Marco Silva", P::Shortstop,   70,58,68,76,82,80),             46,52,40,58), PL::MiddleIF),
+            withRole(withTend(batter("Cody Park",   P::SecondBase,  68,62,68,70,76,66),             52,50,48,56), PL::MiddleIF),
+            withRole(withTend(batter("Roy Evans",   P::Catcher,     66,60,66,52,74,82),             44,58,36,62), PL::Catcher),
         },
-        {"Cole Maddox",   P::Pitcher, 42, 44, 42, 38, 52, 62, 84, 72, 82, 64, PR::Starter},
         {
-            {"Paul West",    P::Pitcher, 40, 40, 40, 38, 50, 58, 70, 62, 66, 60, PR::LongRelief},
-            {"Dave Marsh",   P::Pitcher, 40, 40, 40, 38, 50, 58, 72, 60, 68, 58, PR::MiddleRelief},
-            {"Tim Cruz",     P::Pitcher, 40, 40, 40, 38, 50, 56, 68, 63, 64, 55, PR::MiddleRelief},
-            {"Grant Fox",    P::Pitcher, 40, 40, 40, 38, 50, 60, 74, 62, 70, 58, PR::Setup},
-            {"Nick Black",   P::Pitcher, 40, 40, 40, 38, 50, 60, 78, 64, 74, 55, PR::Closer},
-        }
+            withRole(withArsenal(pitcher("Max Rivera",   84,70,84,78, PR::Starter),
+                {{PT::Fastball,80},{PT::Slider,78},{PT::Curveball,70},{PT::Changeup,66}}), PL::Ace),
+            withRole(withArsenal(pitcher("Ivan Reyes",   78,72,78,74, PR::Starter),
+                {{PT::Fastball,72},{PT::Cutter,70},{PT::Slider,66},{PT::Changeup,62}}), PL::Starter),
+            withRole(withArsenal(pitcher("Dom Vance",    78,76,76,72, PR::Starter),
+                {{PT::Fastball,70},{PT::Curveball,72},{PT::Changeup,68}}), PL::Starter),
+            withRole(withArsenal(pitcher("Levi Bonn",    74,70,70,68, PR::Starter),
+                {{PT::Fastball,66},{PT::Slider,66},{PT::Changeup,62}}), PL::BackOfRotation),
+            withRole(withArsenal(pitcher("Ash Ford",     72,66,66,64, PR::Starter),
+                {{PT::Fastball,62},{PT::Curveball,64},{PT::Changeup,58}}), PL::BackOfRotation),
+        },
+        {
+            withRole(withArsenal(pitcher("Clay Burns",  88,66,88,44, PR::Closer),
+                {{PT::Fastball,82},{PT::Slider,80},{PT::Cutter,70}}), PL::Closer),
+            withRole(withArsenal(pitcher("Rex Moore",   84,68,82,50, PR::Setup),
+                {{PT::Fastball,76},{PT::Slider,74},{PT::Changeup,62}}), PL::Setup),
+            withRole(withArsenal(pitcher("Seth Long",   82,70,78,52, PR::Setup),
+                {{PT::Fastball,74},{PT::Cutter,72},{PT::Curveball,64}}), PL::Setup),
+            withRole(withArsenal(pitcher("Evan Cole",   78,66,74,60, PR::MiddleRelief),
+                {{PT::Fastball,68},{PT::Slider,66},{PT::Changeup,58}}), PL::MiddleRelief),
+            withRole(withArsenal(pitcher("Jace Hill",   76,68,72,62, PR::MiddleRelief),
+                {{PT::Fastball,66},{PT::Curveball,66},{PT::Changeup,60}}), PL::MiddleRelief),
+            withRole(withArsenal(pitcher("Hugh Carr",   72,72,66,76, PR::LongRelief),
+                {{PT::Fastball,62},{PT::Changeup,66},{PT::Curveball,62}}), PL::LongRelief),
+            withRole(withArsenal(pitcher("Noel Rios",   74,70,68,52, PR::MiddleRelief, TH::Left),
+                {{PT::Fastball,62},{PT::Curveball,68},{PT::Changeup,64}}), PL::Specialist),
+            withRole(withArsenal(pitcher("Troy Kane",   74,66,68,68, PR::LongRelief),
+                {{PT::Fastball,64},{PT::Slider,62},{PT::Changeup,58}}), PL::LongRelief),
+        },
+        {
+            withRole(withTend(batter("Lars Beck",   P::Catcher,    60,54,62,46,70,78),             40,58,36,60), PL::BackupCatcher),
+            withRole(withTend(batter("Abe Cole",    P::ThirdBase,  64,58,66,66,76,72),             50,50,46,56), PL::UtilityIF),
+            withRole(withTend(batter("Flash Wells", P::LeftField,  62,54,60,82,68,60, BS::Left),   46,52,42,54), PL::ExtraOF),
+            withRole(withTend(batter("Gus Mora",    P::FirstBase,  72,72,66,46,54,56),             68,46,62,42), PL::PinchHitter),
+            withRole(withTend(batter("Stan Cruz",   P::RightField, 68,64,64,54,56,60, BS::Left),   60,50,52,50), PL::PinchHitter),
+        },
+        BallparkConfig::wolfDen()
     };
 }
 
-// ────────────────────────────────────────────
-// Staten Island Foxes — 弱小
-// ────────────────────────────────────────────
+// ── Harlem Eagles ─────────────────────────────────────────────────────────────
+// チームカラー: 中堅。パワーとスピードのバランス型。特出した選手が少ない。
+Team harlemEagles() {
+    return Team{
+        "Harlem Eagles",
+        {
+            withRole(withTend(batter("Remy Jones",  P::CenterField, 72,60,70,80,72,60, BS::Left),   46,54,38,62), PL::Leadoff),
+            withRole(withTend(batter("Carl Diaz",   P::LeftField,   70,68,62,64,66,64),             60,48,56,46), PL::ContactHitter),
+            withRole(withTend(batter("Hank Green",  P::FirstBase,   70,78,62,50,62,60),             66,46,60,42), PL::CornerIF),
+            withRole(withTend(batter("Brice Allen", P::RightField,  68,80,58,54,64,70, BS::Left),   70,44,64,38), PL::CornerOF),
+            withRole(withTend(batter("Fred Mann",   P::ThirdBase,   72,68,64,60,68,64),             54,52,50,52), PL::CornerIF),
+            withRole(withTend(batter("Sid Lane",    P::Shortstop,   66,54,64,72,78,76),             48,52,44,56), PL::MiddleIF),
+            withRole(withTend(batter("Tom Cruz",    P::SecondBase,  64,58,66,68,74,66),             52,50,50,52), PL::MiddleIF),
+            withRole(withTend(batter("Ed Nash",     P::Catcher,     62,56,62,50,70,78),             42,56,38,60), PL::Catcher),
+        },
+        {
+            withRole(withArsenal(pitcher("Roy Holt",     84,68,82,74, PR::Starter),
+                {{PT::Fastball,78},{PT::Slider,74},{PT::Curveball,66},{PT::Changeup,62}}), PL::Ace),
+            withRole(withArsenal(pitcher("Carl Webb",    76,70,72,70, PR::Starter),
+                {{PT::Fastball,68},{PT::Changeup,68},{PT::Slider,64}}), PL::Starter),
+            withRole(withArsenal(pitcher("Zane Park",    72,72,68,68, PR::Starter),
+                {{PT::Fastball,64},{PT::Curveball,66},{PT::Changeup,62}}), PL::Starter),
+            withRole(withArsenal(pitcher("Drew Finn",    70,64,64,64, PR::Starter),
+                {{PT::Fastball,60},{PT::Slider,62},{PT::Changeup,58}}), PL::BackOfRotation),
+            withRole(withArsenal(pitcher("Joe Vance",    66,62,60,62, PR::Starter),
+                {{PT::Fastball,58},{PT::Changeup,58},{PT::Curveball,54}}), PL::BackOfRotation),
+        },
+        {
+            withRole(withArsenal(pitcher("Bill Knox",   84,64,82,44, PR::Closer),
+                {{PT::Fastball,76},{PT::Slider,74}}), PL::Closer),
+            withRole(withArsenal(pitcher("Al Grant",    80,66,76,52, PR::Setup),
+                {{PT::Fastball,70},{PT::Slider,68},{PT::Changeup,60}}), PL::Setup),
+            withRole(withArsenal(pitcher("Ron Slade",   78,64,74,54, PR::Setup),
+                {{PT::Fastball,68},{PT::Cutter,66},{PT::Curveball,60}}), PL::Setup),
+            withRole(withArsenal(pitcher("Hal Dunn",    74,62,68,60, PR::MiddleRelief),
+                {{PT::Fastball,62},{PT::Slider,62}}), PL::MiddleRelief),
+            withRole(withArsenal(pitcher("Ned Fox",     72,64,66,62, PR::MiddleRelief),
+                {{PT::Fastball,62},{PT::Changeup,62},{PT::Curveball,56}}), PL::MiddleRelief),
+            withRole(withArsenal(pitcher("Lee Dean",    68,68,62,72, PR::LongRelief),
+                {{PT::Fastball,58},{PT::Changeup,62},{PT::Curveball,58}}), PL::LongRelief),
+            withRole(withArsenal(pitcher("Jay Lund",    70,66,64,52, PR::MiddleRelief, TH::Left),
+                {{PT::Fastball,58},{PT::Curveball,64},{PT::Changeup,60}}), PL::Specialist),
+            withRole(withArsenal(pitcher("Vick Ross",   70,62,64,66, PR::LongRelief),
+                {{PT::Fastball,60},{PT::Slider,58},{PT::Changeup,54}}), PL::LongRelief),
+        },
+        {
+            withRole(withTend(batter("Lew Bond",    P::Catcher,    54,50,58,46,66,74),             40,54,36,58), PL::BackupCatcher),
+            withRole(withTend(batter("Ray Blaine",  P::Shortstop,  60,52,60,66,74,70),             48,50,44,54), PL::UtilityIF),
+            withRole(withTend(batter("Hank Pena",   P::LeftField,  60,56,58,72,66,58, BS::Left),   46,52,42,52), PL::ExtraOF),
+            withRole(withTend(batter("Gus Webb",    P::FirstBase,  66,64,62,48,54,56),             64,46,58,44), PL::PinchHitter),
+            withRole(withTend(batter("Ed Cross",    P::RightField, 60,68,56,54,54,58, BS::Left),   68,42,62,40), PL::PinchHitter),
+        },
+        BallparkConfig::eaglePark()
+    };
+}
+
+// ── Staten Island Foxes ───────────────────────────────────────────────────────
+// チームカラー: リビルド中の弱小チーム。若手中心、投打ともに低水準。
 Team statenIslandFoxes() {
     return Team{
         "Staten Island Foxes",
         {
-            {"Joey Lane",     P::CenterField, 77, 61, 65, 68, 60, 56, 30, 29, 28},  // 61 nc
-            {"Matt Chen",     P::LeftField,   75, 64, 62, 62, 62, 60, 29, 30, 29},  // 65-1
-            batter("Pat Gallo",     P::FirstBase,   73, 73, 60, 50, 58, 56, 31, 30, 30, BS::Left),  // 75-2
-            {"Dave Moss",     P::RightField,  71, 72, 60, 54, 60, 64, 30, 30, 29},  // 73-1
-            {"Rob Stone",     P::ThirdBase,   73, 68, 62, 58, 62, 60, 28, 29, 28},  // 69-1
-            {"Al Ross",       P::Shortstop,   70, 61, 60, 64, 68, 62, 30, 30, 29},  // 61 nc
-            {"Tim Carr",      P::SecondBase,  68, 61, 58, 58, 64, 58, 30, 29, 28},  // 61 nc
-            {"Gary Knox",     P::Catcher,     67, 57, 58, 52, 66, 60, 30, 32, 29},  // 57 nc
+            withRole(withTend(batter("Nick Dole",   P::CenterField, 68,56,64,76,66,56, BS::Left),   44,52,46,54), PL::Leadoff),
+            withRole(withTend(batter("Wes Lyons",   P::LeftField,   66,60,60,64,62,62),             56,48,56,46), PL::ContactHitter),
+            withRole(withTend(batter("Bart Shaw",   P::FirstBase,   64,68,58,50,60,58),             64,46,62,40), PL::CornerIF),
+            withRole(withTend(batter("Kirk James",  P::RightField,  62,72,54,52,60,66, BS::Left),   68,42,66,38), PL::CornerOF),
+            withRole(withTend(batter("Walt Holt",   P::ThirdBase,   66,64,60,58,64,62),             54,50,52,48), PL::CornerIF),
+            withRole(withTend(batter("Vince Pena",  P::Shortstop,   64,52,62,70,72,70),             48,50,46,54), PL::MiddleIF),
+            withRole(withTend(batter("Dale Ross",   P::SecondBase,  62,56,64,64,68,62),             52,50,52,50), PL::MiddleIF),
+            withRole(withTend(batter("Hank Olson",  P::Catcher,     60,54,62,50,64,72),             42,54,40,56), PL::Catcher),
         },
-        pitcher("Ben Mack", 40, 42, 40, 38, 50, 56, 74, 64, 67, 48, PR::Starter, TH::Left),
         {
-            {"Rob Clay",     P::Pitcher, 40, 40, 40, 38, 50, 56, 68, 61, 65, 52, PR::LongRelief},
-            {"Dave Kim",     P::Pitcher, 40, 40, 40, 38, 50, 56, 70, 59, 67, 50, PR::MiddleRelief},
-            {"Pat Ross",     P::Pitcher, 40, 40, 40, 38, 50, 54, 66, 61, 65, 48, PR::MiddleRelief},
-            {"Al Price",     P::Pitcher, 40, 40, 40, 38, 50, 56, 72, 61, 69, 52, PR::Setup},
-            {"Ty Shore",     P::Pitcher, 40, 40, 40, 38, 50, 58, 74, 63, 71, 50, PR::Closer},
-        }
+            withRole(withArsenal(pitcher("Ben Mack",     78,64,74,70, PR::Starter),
+                {{PT::Fastball,70},{PT::Slider,66},{PT::Changeup,62},{PT::Curveball,58}}), PL::Ace),
+            withRole(withArsenal(pitcher("Carl Kent",    74,62,68,66, PR::Starter),
+                {{PT::Fastball,64},{PT::Changeup,62},{PT::Slider,58}}), PL::Starter),
+            withRole(withArsenal(pitcher("Al Boone",     66,62,62,62, PR::Starter),
+                {{PT::Fastball,58},{PT::Curveball,60},{PT::Changeup,56}}), PL::Starter),
+            withRole(withArsenal(pitcher("Ted Short",    64,58,58,60, PR::Starter),
+                {{PT::Fastball,54},{PT::Slider,56},{PT::Changeup,52}}), PL::BackOfRotation),
+            withRole(withArsenal(pitcher("Rex Pryor",    62,56,56,58, PR::Starter),
+                {{PT::Fastball,52},{PT::Changeup,54},{PT::Curveball,50}}), PL::BackOfRotation),
+        },
+        {
+            withRole(withArsenal(pitcher("Joe Carr",    78,60,76,44, PR::Closer),
+                {{PT::Fastball,70},{PT::Slider,68}}), PL::Closer),
+            withRole(withArsenal(pitcher("Art Dunn",    74,62,70,50, PR::Setup),
+                {{PT::Fastball,64},{PT::Slider,62},{PT::Changeup,56}}), PL::Setup),
+            withRole(withArsenal(pitcher("Lee Fox",     72,60,66,52, PR::Setup),
+                {{PT::Fastball,62},{PT::Cutter,60},{PT::Curveball,56}}), PL::Setup),
+            withRole(withArsenal(pitcher("Ray Holt",    68,58,62,58, PR::MiddleRelief),
+                {{PT::Fastball,58},{PT::Slider,58}}), PL::MiddleRelief),
+            withRole(withArsenal(pitcher("Ed Grant",    66,60,60,60, PR::MiddleRelief),
+                {{PT::Fastball,56},{PT::Changeup,58},{PT::Curveball,54}}), PL::MiddleRelief),
+            withRole(withArsenal(pitcher("Walt Dean",   64,62,58,68, PR::LongRelief),
+                {{PT::Fastball,54},{PT::Changeup,58},{PT::Curveball,54}}), PL::LongRelief),
+            withRole(withArsenal(pitcher("Jim Ross",    66,62,60,50, PR::MiddleRelief, TH::Left),
+                {{PT::Fastball,54},{PT::Curveball,60},{PT::Changeup,56}}), PL::Specialist),
+            withRole(withArsenal(pitcher("Ned Kane",    66,58,60,64, PR::LongRelief),
+                {{PT::Fastball,56},{PT::Slider,54},{PT::Changeup,52}}), PL::LongRelief),
+        },
+        {
+            withRole(withTend(batter("Dex Cole",    P::Catcher,    50,46,54,44,62,68),             40,52,42,52), PL::BackupCatcher),
+            withRole(withTend(batter("Ed Lyons",    P::SecondBase, 56,48,56,62,68,64),             48,50,48,52), PL::UtilityIF),
+            withRole(withTend(batter("Jake Voss",   P::LeftField,  56,50,54,70,62,56, BS::Left),   44,52,46,50), PL::ExtraOF),
+            withRole(withTend(batter("Ike Dunn",    P::FirstBase,  60,58,56,46,50,54),             62,44,60,42), PL::PinchHitter),
+            withRole(withTend(batter("Clay Park",   P::RightField, 54,60,50,52,52,56, BS::Left),   66,42,64,40), PL::PinchHitter),
+        },
+        BallparkConfig::foxField()
     };
 }
 
 } // namespace
+
+// ── Public ────────────────────────────────────────────────────────────────────
 
 std::vector<Team> allTeams() {
     return {
         newarkKnights(),
         queensTitans(),
         brooklynHammers(),
-        harlemEagles(),
         bronxWolves(),
+        harlemEagles(),
         statenIslandFoxes(),
     };
 }

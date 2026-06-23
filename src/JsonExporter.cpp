@@ -1,4 +1,5 @@
 #include "JsonExporter.h"
+#include "AnimationTypes.h"
 #include "GameEngine.h"
 
 #include <iomanip>
@@ -9,7 +10,19 @@ namespace joji {
 namespace {
 
 std::string q(const std::string& s) {
-    return "\"" + s + "\"";
+    std::string out = "\"";
+    for (char c : s) {
+        switch (c) {
+            case '\\': out += "\\\\"; break;
+            case '"': out += "\\\""; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default: out += c; break;
+        }
+    }
+    out += "\"";
+    return out;
 }
 
 std::string dbl(double v, int prec = 3) {
@@ -34,6 +47,247 @@ std::string resultTypeName(GameResultType t) {
         case GameResultType::Tie:     return "Tie";
     }
     return "Unknown";
+}
+
+std::string replayEventTypeName(ReplayEventType type) {
+    switch (type) {
+        case ReplayEventType::Pitch:      return "Pitch";
+        case ReplayEventType::Contact:    return "Contact";
+        case ReplayEventType::BallFlight: return "BallFlight";
+        case ReplayEventType::Field:      return "Field";
+        case ReplayEventType::Throw:      return "Throw";
+        case ReplayEventType::Runner:     return "Runner";
+        case ReplayEventType::Tag:        return "Tag";
+        case ReplayEventType::Result:     return "Result";
+    }
+    return "Result";
+}
+
+std::string replayPhaseName(ReplayPhase phase) {
+    switch (phase) {
+        case ReplayPhase::Pitch:      return "PitchPhase";
+        case ReplayPhase::Contact:    return "ContactPhase";
+        case ReplayPhase::BallFlight: return "BallFlightPhase";
+        case ReplayPhase::Field:      return "FieldPhase";
+        case ReplayPhase::Throw:      return "ThrowPhase";
+        case ReplayPhase::Runner:     return "RunnerPhase";
+        case ReplayPhase::Tag:        return "TagPhase";
+        case ReplayPhase::Result:     return "ResultPhase";
+    }
+    return "ResultPhase";
+}
+
+std::string pointJson(const AnimationPoint& p, const std::string& indent) {
+    std::string s = indent + "{";
+    s += q("x") + ": " + dbl(p.x) + ", ";
+    s += q("y") + ": " + dbl(p.y) + ", ";
+    s += q("z") + ": " + dbl(p.z) + ", ";
+    s += q("t") + ": " + dbl(p.timeSeconds);
+    s += "}";
+    return s;
+}
+
+std::string pointArrayJson(const std::vector<AnimationPoint>& points,
+                           const std::string& indent) {
+    std::string s = "[\n";
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        s += pointJson(points[i], indent + "  ");
+        if (i + 1 < points.size()) s += ",";
+        s += "\n";
+    }
+    s += indent + "]";
+    return s;
+}
+
+std::string pitchAnimationJson(const PitchAnimation& pitch,
+                               const std::string& indent) {
+    std::string s = indent + "{\n";
+    s += indent + "  " + q("pitcherName") + ": " + q(pitch.pitcherName) + ",\n";
+    s += indent + "  " + q("batterName") + ": " + q(pitch.batterName) + ",\n";
+    s += indent + "  " + q("pitchType") + ": " + q(pitch.pitchType) + ",\n";
+    s += indent + "  " + q("durationSeconds") + ": " + dbl(pitch.durationSeconds) + ",\n";
+    s += indent + "  " + q("velocity") + ": " + dbl(pitch.velocity) + ",\n";
+    s += indent + "  " + q("movementX") + ": " + dbl(pitch.movementX) + ",\n";
+    s += indent + "  " + q("movementZ") + ": " + dbl(pitch.movementZ) + ",\n";
+    s += indent + "  " + q("endLocationX") + ": " + dbl(pitch.endLocationX) + ",\n";
+    s += indent + "  " + q("endLocationZ") + ": " + dbl(pitch.endLocationZ) + ",\n";
+    s += indent + "  " + q("zoneNumber") + ": " + std::to_string(pitch.zoneNumber) + ",\n";
+    s += indent + "  " + q("result") + ": " + q(pitch.result) + ",\n";
+    s += indent + "  " + q("isStrike") + ": " + std::string(pitch.isStrike ? "true" : "false") + ",\n";
+    s += indent + "  " + q("isBall") + ": " + std::string(pitch.isBall ? "true" : "false") + ",\n";
+    s += indent + "  " + q("isInPlay") + ": " + std::string(pitch.isInPlay ? "true" : "false") + ",\n";
+    s += indent + "  " + q("start") + ": " + pointJson(pitch.start, "") + ",\n";
+    s += indent + "  " + q("end") + ": " + pointJson(pitch.end, "") + ",\n";
+    s += indent + "  " + q("points") + ": " + pointArrayJson(pitch.points, indent + "  ") + "\n";
+    s += indent + "}";
+    return s;
+}
+
+std::string battedBallAnimationJson(const BattedBallAnimation& ball,
+                                    const std::string& indent) {
+    std::string s = indent + "{\n";
+    s += indent + "  " + q("batterName") + ": " + q(ball.batterName) + ",\n";
+    s += indent + "  " + q("result") + ": " + q(ball.result) + ",\n";
+    s += indent + "  " + q("classification") + ": " + q(ball.classification) + ",\n";
+    s += indent + "  " + q("durationSeconds") + ": " + dbl(ball.durationSeconds) + ",\n";
+    s += indent + "  " + q("estimatedDistance") + ": " + dbl(ball.estimatedDistance) + ",\n";
+    s += indent + "  " + q("maxHeight") + ": " + dbl(ball.maxHeight) + ",\n";
+    s += indent + "  " + q("landsFair") + ": " + std::string(ball.landsFair ? "true" : "false") + ",\n";
+    s += indent + "  " + q("crossesFence") + ": " + std::string(ball.crossesFence ? "true" : "false") + ",\n";
+    s += indent + "  " + q("landingPoint") + ": " + pointJson(ball.landingPoint, "") + ",\n";
+    s += indent + "  " + q("finalPoint") + ": " + pointJson(ball.finalPoint, "") + ",\n";
+    s += indent + "  " + q("points") + ": " + pointArrayJson(ball.points, indent + "  ") + "\n";
+    s += indent + "}";
+    return s;
+}
+
+std::string runnerAnimationJson(const RunnerAnimation& runner,
+                                const std::string& indent) {
+    std::string s = indent + "{\n";
+    s += indent + "  " + q("runnerName") + ": " + q(runner.runnerName) + ",\n";
+    s += indent + "  " + q("fromBase") + ": " + std::to_string(runner.fromBase) + ",\n";
+    s += indent + "  " + q("toBase") + ": " + std::to_string(runner.toBase) + ",\n";
+    s += indent + "  " + q("scored") + ": " + std::string(runner.scored ? "true" : "false") + ",\n";
+    s += indent + "  " + q("out") + ": " + std::string(runner.out ? "true" : "false") + ",\n";
+    s += indent + "  " + q("outAtBase") + ": " + q(runner.outAtBase) + ",\n";
+    s += indent + "  " + q("durationSeconds") + ": " + dbl(runner.durationSeconds) + ",\n";
+    s += indent + "  " + q("points") + ": " + pointArrayJson(runner.points, indent + "  ") + "\n";
+    s += indent + "}";
+    return s;
+}
+
+std::string defenseAnimationJson(const DefenseAnimation& defender,
+                                 const std::string& indent) {
+    std::string s = indent + "{\n";
+    s += indent + "  " + q("fielderId") + ": " + std::to_string(defender.fielderId) + ",\n";
+    s += indent + "  " + q("fielderName") + ": " + q(defender.fielderName) + ",\n";
+    s += indent + "  " + q("madePlay") + ": " + std::string(defender.madePlay ? "true" : "false") + ",\n";
+    s += indent + "  " + q("durationSeconds") + ": " + dbl(defender.durationSeconds) + ",\n";
+    s += indent + "  " + q("points") + ": " + pointArrayJson(defender.points, indent + "  ") + "\n";
+    s += indent + "}";
+    return s;
+}
+
+std::string throwAnimationJson(const ThrowAnimation& throwAnimation,
+                               const std::string& indent) {
+    std::string s = indent + "{\n";
+    s += indent + "  " + q("fielderId") + ": " + std::to_string(throwAnimation.fielderId) + ",\n";
+    s += indent + "  " + q("fielderName") + ": " + q(throwAnimation.fielderName) + ",\n";
+    s += indent + "  " + q("targetBase") + ": " + std::to_string(throwAnimation.targetBase) + ",\n";
+    s += indent + "  " + q("startTimeOffset") + ": " + dbl(throwAnimation.startTimeOffset) + ",\n";
+    s += indent + "  " + q("durationSeconds") + ": " + dbl(throwAnimation.durationSeconds) + ",\n";
+    s += indent + "  " + q("badThrow") + ": " + std::string(throwAnimation.badThrow ? "true" : "false") + ",\n";
+    s += indent + "  " + q("offlineFeet") + ": " + dbl(throwAnimation.offlineFeet) + ",\n";
+    s += indent + "  " + q("points") + ": " + pointArrayJson(throwAnimation.points, indent + "  ") + "\n";
+    s += indent + "}";
+    return s;
+}
+
+std::string runnerMovementJson(const RunnerMovement& runner,
+                               const std::string& indent) {
+    std::string s = indent + "{\n";
+    s += indent + "  " + q("runnerName") + ": " + q(runner.runnerName) + ",\n";
+    s += indent + "  " + q("fromBase") + ": " + std::to_string(runner.fromBase) + ",\n";
+    s += indent + "  " + q("toBase") + ": " + std::to_string(runner.toBase) + ",\n";
+    s += indent + "  " + q("startTime") + ": " + dbl(runner.startTime) + ",\n";
+    s += indent + "  " + q("arrivalTime") + ": " + dbl(runner.arrivalTime) + ",\n";
+    s += indent + "  " + q("topSpeedFeetPerSecond") + ": " + dbl(runner.topSpeedFeetPerSecond) + ",\n";
+    s += indent + "  " + q("accelerationFeetPerSecond2") + ": " + dbl(runner.accelerationFeetPerSecond2) + ",\n";
+    s += indent + "  " + q("turnPenaltySeconds") + ": " + dbl(runner.turnPenaltySeconds) + ",\n";
+    s += indent + "  " + q("slideTimeSeconds") + ": " + dbl(runner.slideTimeSeconds) + ",\n";
+    s += indent + "  " + q("usedForSafeOut") + ": " + std::string(runner.usedForSafeOut ? "true" : "false") + ",\n";
+    s += indent + "  " + q("scored") + ": " + std::string(runner.scored ? "true" : "false") + ",\n";
+    s += indent + "  " + q("out") + ": " + std::string(runner.out ? "true" : "false") + ",\n";
+    s += indent + "  " + q("routePoints") + ": " + pointArrayJson(runner.routePoints, indent + "  ") + "\n";
+    s += indent + "}";
+    return s;
+}
+
+std::string throwMovementJson(const ThrowMovement& throwMovement,
+                              const std::string& indent) {
+    std::string s = indent + "{\n";
+    s += indent + "  " + q("fielderName") + ": " + q(throwMovement.fielderName) + ",\n";
+    s += indent + "  " + q("targetBase") + ": " + std::to_string(throwMovement.targetBase) + ",\n";
+    s += indent + "  " + q("startTime") + ": " + dbl(throwMovement.startTime) + ",\n";
+    s += indent + "  " + q("arrivalTime") + ": " + dbl(throwMovement.arrivalTime) + ",\n";
+    s += indent + "  " + q("velocityFeetPerSecond") + ": " + dbl(throwMovement.velocityFeetPerSecond) + ",\n";
+    s += indent + "  " + q("accuracy") + ": " + dbl(throwMovement.accuracy) + ",\n";
+    s += indent + "  " + q("fromPosition") + ": " + pointJson(throwMovement.fromPosition, "") + ",\n";
+    s += indent + "  " + q("trajectory") + ": " + pointArrayJson(throwMovement.trajectory, indent + "  ") + "\n";
+    s += indent + "}";
+    return s;
+}
+
+std::string tagPlayJson(const TagPlay& tag,
+                        const std::string& indent) {
+    std::string s = indent + "{\n";
+    s += indent + "  " + q("base") + ": " + std::to_string(tag.base) + ",\n";
+    s += indent + "  " + q("runnerName") + ": " + q(tag.runnerName) + ",\n";
+    s += indent + "  " + q("runnerArrivalTime") + ": " + dbl(tag.runnerArrivalTime) + ",\n";
+    s += indent + "  " + q("ballArrivalTime") + ": " + dbl(tag.ballArrivalTime) + ",\n";
+    s += indent + "  " + q("tagTime") + ": " + dbl(tag.tagTime) + ",\n";
+    s += indent + "  " + q("runnerSafe") + ": " + std::string(tag.runnerSafe ? "true" : "false") + "\n";
+    s += indent + "}";
+    return s;
+}
+
+std::string replayDecisionJson(const ReplayDecision& decision,
+                               const std::string& indent) {
+    std::string s = indent + "{\n";
+    s += indent + "  " + q("chosenTargetBase") + ": "
+        + std::to_string(decision.chosenTargetBase) + ",\n";
+    s += indent + "  " + q("holdBall") + ": "
+        + std::string(decision.holdBall ? "true" : "false") + ",\n";
+    s += indent + "  " + q("cutoff") + ": "
+        + std::string(decision.cutoff ? "true" : "false") + ",\n";
+    s += indent + "  " + q("reason") + ": " + q(decision.reason) + "\n";
+    s += indent + "}";
+    return s;
+}
+
+template <typename T, typename Formatter>
+std::string objectArrayJson(const std::vector<T>& items,
+                            const std::string& indent,
+                            Formatter formatter) {
+    std::string s = "[\n";
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        s += formatter(items[i], indent + "  ");
+        if (i + 1 < items.size()) s += ",";
+        s += "\n";
+    }
+    s += indent + "]";
+    return s;
+}
+
+std::string replayEventJson(const ReplayEvent& event, const std::string& indent) {
+    std::string s = indent + "{\n";
+    s += indent + "  " + q("type") + ": " + q(replayEventTypeName(event.type)) + ",\n";
+    s += indent + "  " + q("phase") + ": " + q(replayPhaseName(phaseForReplayEvent(event.type))) + ",\n";
+    s += indent + "  " + q("timeSeconds") + ": " + dbl(event.timeSeconds) + ",\n";
+    s += indent + "  " + q("label") + ": " + q(event.label) + ",\n";
+    s += indent + "  " + q("actor") + ": " + q(event.actor) + ",\n";
+    s += indent + "  " + q("detail") + ": " + q(event.detail) + ",\n";
+    s += indent + "  " + q("result") + ": " + q(event.result) + ",\n";
+    s += indent + "  " + q("base") + ": " + std::to_string(event.base) + ",\n";
+    s += indent + "  " + q("position") + ": " + pointJson(event.position, "") + "\n";
+    s += indent + "}";
+    return s;
+}
+
+std::string replayTimelineJson(const ReplayTimeline& timeline, const std::string& indent) {
+    std::string s = indent + "{\n";
+    s += indent + "  " + q("schemaName") + ": " + q(timeline.schemaName) + ",\n";
+    s += indent + "  " + q("schemaVersion") + ": " + std::to_string(timeline.schemaVersion) + ",\n";
+    s += indent + "  " + q("durationSeconds") + ": " + dbl(timeline.durationSeconds) + ",\n";
+    s += indent + "  " + q("events") + ": [\n";
+    for (std::size_t i = 0; i < timeline.events.size(); ++i) {
+        s += replayEventJson(timeline.events[i], indent + "    ");
+        if (i + 1 < timeline.events.size()) s += ",";
+        s += "\n";
+    }
+    s += indent + "  ]\n";
+    s += indent + "}";
+    return s;
 }
 
 double safeRate(int num, int den) {
@@ -94,6 +348,34 @@ std::string exportGameToJson(const GameEngine& engine) {
     s += "  " + q("awayPlayerStats") + ": " + playerArrayJson(engine.awayPlayerStats(), "  ") + ",\n";
     s += "  " + q("homePlayerStats") + ": " + playerArrayJson(engine.homePlayerStats(), "  ") + "\n";
 
+    s += "}\n";
+    return s;
+}
+
+std::string exportAnimationPlanToJson(const AnimationPlan& plan) {
+    std::string s = "{\n";
+    s += "  " + q("gameId") + ": " + q(plan.gameId) + ",\n";
+    s += "  " + q("description") + ": " + q(plan.description) + ",\n";
+    s += "  " + q("totalDurationSeconds") + ": " + dbl(plan.totalDurationSeconds) + ",\n";
+    s += "  " + q("hasPitch") + ": " + std::string(plan.hasPitch ? "true" : "false") + ",\n";
+    s += "  " + q("hasBattedBall") + ": " + std::string(plan.hasBattedBall ? "true" : "false") + ",\n";
+    s += "  " + q("pitch") + ": " + pitchAnimationJson(plan.pitch, "  ") + ",\n";
+    s += "  " + q("battedBall") + ": " + battedBallAnimationJson(plan.battedBall, "  ") + ",\n";
+    s += "  " + q("runners") + ": " + objectArrayJson(
+        plan.runners, "  ", runnerAnimationJson) + ",\n";
+    s += "  " + q("defenders") + ": " + objectArrayJson(
+        plan.defenders, "  ", defenseAnimationJson) + ",\n";
+    s += "  " + q("throws") + ": " + objectArrayJson(
+        plan.throws, "  ", throwAnimationJson) + ",\n";
+    s += "  " + q("runnerMovements") + ": " + objectArrayJson(
+        plan.runnerMovements, "  ", runnerMovementJson) + ",\n";
+    s += "  " + q("throwMovements") + ": " + objectArrayJson(
+        plan.throwMovements, "  ", throwMovementJson) + ",\n";
+    s += "  " + q("tagPlays") + ": " + objectArrayJson(
+        plan.tagPlays, "  ", tagPlayJson) + ",\n";
+    s += "  " + q("defensiveDecision") + ": "
+        + replayDecisionJson(plan.defensiveDecision, "  ") + ",\n";
+    s += "  " + q("replayTimeline") + ": " + replayTimelineJson(plan.replayTimeline, "  ") + "\n";
     s += "}\n";
     return s;
 }

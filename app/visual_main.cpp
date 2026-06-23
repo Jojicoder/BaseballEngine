@@ -50,6 +50,37 @@ sf::Vector2f pitchPoint(const joji::AnimationPoint& point) {
     };
 }
 
+// ── OPS / BABIP 計算ヘルパー ───────────────────────────────────────────────
+
+double calcOBP(const joji::PlayerBoxScore& p) {
+    const int denom = p.atBats + p.walks + p.hitByPitch + p.sacFlies;
+    return denom > 0 ? static_cast<double>(p.hits + p.walks + p.hitByPitch) / denom : 0.0;
+}
+double calcSLG(const joji::PlayerBoxScore& p) {
+    return p.atBats > 0 ? static_cast<double>(p.totalBases) / p.atBats : 0.0;
+}
+double calcOPS(const joji::PlayerBoxScore& p) { return calcOBP(p) + calcSLG(p); }
+double calcBABIP(const joji::PlayerBoxScore& p) {
+    const int denom = p.atBats - p.strikeouts - p.homeRuns + p.sacFlies;
+    return denom > 0 ? static_cast<double>(p.hits - p.homeRuns) / denom : 0.0;
+}
+
+// ── 守備位置略称 ───────────────────────────────────────────────────────────
+std::string positionAbbr(joji::Position pos) {
+    switch (pos) {
+        case joji::Position::Pitcher:     return "P";
+        case joji::Position::Catcher:     return "C";
+        case joji::Position::FirstBase:   return "1B";
+        case joji::Position::SecondBase:  return "2B";
+        case joji::Position::ThirdBase:   return "3B";
+        case joji::Position::Shortstop:   return "SS";
+        case joji::Position::LeftField:   return "LF";
+        case joji::Position::CenterField: return "CF";
+        case joji::Position::RightField:  return "RF";
+    }
+    return "??";
+}
+
 sf::Color outcomeColor(joji::AtBatResultType type) {
     switch (type) {
         case joji::AtBatResultType::HomeRun:
@@ -61,6 +92,7 @@ sf::Color outcomeColor(joji::AtBatResultType type) {
         case joji::AtBatResultType::Single:
             return {80, 190, 100};
         case joji::AtBatResultType::Walk:
+        case joji::AtBatResultType::HitByPitch:
         case joji::AtBatResultType::Error:
             return {153, 116, 228};
         case joji::AtBatResultType::StrikeOut:
@@ -90,14 +122,33 @@ bool isGroundTrajectory(const joji::PlayResult& play,
 
 bool isAirTrajectory(const joji::PlayResult& play,
                      const joji::AnimationPlan& plan) {
-    return !isGroundTrajectory(play, plan)
-        && (plan.battedBall.maxHeight >= 18.0 || play.battedBall.launchAngle >= 12.0);
+    if (isGroundTrajectory(play, plan)) return false;
+    const std::string& cls = plan.battedBall.classification;
+    // "line drive", "low liner", "fly ball", "pop fly", "deep drive", "warning track" など
+    for (const char* kw : {"line", "liner", "fly", "drive", "pop"}) {
+        if (cls.find(kw) != std::string::npos) return true;
+    }
+    return plan.battedBall.maxHeight >= 18.0 || play.battedBall.launchAngle >= 12.0;
 }
 
-sf::Vector2f battedBallDrawPoint(const joji::AnimationPoint& point, bool airTrajectory) {
-    const double visualLift = airTrajectory ? std::clamp(point.z, 0.0, 180.0) * 0.16 : 0.0;
+// 分類ごとに視覚リフト倍率を返す: ラインドライブは控えめ、高弾道フライは大きく
+float airLiftFactor(const joji::AnimationPlan& plan) {
+    const std::string& cls = plan.battedBall.classification;
+    if (cls.find("low liner") != std::string::npos) return 0.04f;
+    if (cls.find("line drive") != std::string::npos) return 0.08f;
+    if (cls.find("pop") != std::string::npos)        return 0.20f;
+    return 0.16f; // fly ball / deep drive / warning track
+}
+
+sf::Vector2f battedBallDrawPoint(const joji::AnimationPoint& point,
+                                  bool airTrajectory,
+                                  float liftFactor = 0.16f) {
+    const double visualLift = airTrajectory
+        ? std::clamp(point.z, 0.0, 180.0) * static_cast<double>(liftFactor)
+        : 0.0;
     return fieldPoint(point.x, point.y + visualLift);
 }
+
 
 std::string halfLabel(const joji::GameState& state) {
     return std::string(state.isTop ? "Top " : "Bottom ") + std::to_string(state.inning);
@@ -140,7 +191,187 @@ void drawPanel(sf::RenderWindow& window) {
     window.draw(rule);
 }
 
-void drawField(sf::RenderWindow& window) {
+// ── ラインスコア (イニング別得点) ─────────────────────────────────────────
+
+void drawLineScore(sf::RenderWindow& window,
+                   const sf::Font& font,
+                   const joji::GameEngine& engine,
+                   bool complete) {
+    const auto& state      = engine.state();
+    const auto& awayLS     = engine.awayLineScore();
+    const auto& homeLS     = engine.homeLineScore();
+    const int   currInning = state.inning;
+
+    // 表示イニング: 最大9（延長は最後の方を表示）
+    constexpr int kDisplayInnings = 9;
+    const int lastInn = std::max(kDisplayInnings, currInning);
+    const int firstInn = std::max(1, lastInn - kDisplayInnings + 1);
+
+    constexpr float panelX  = 935.0f;
+    constexpr float startY  = 118.0f;
+    constexpr float colW    = 22.0f;
+    constexpr float labelW  = 80.0f;
+
+
+    // チーム名列
+    const sf::Color headerCol{90, 100, 96};
+    const sf::Color awayCol = (complete && state.awayScore > state.homeScore)
+        ? sf::Color{243, 185, 54} : sf::Color{42, 48, 45};
+    const sf::Color homeCol = (complete && state.homeScore > state.awayScore)
+        ? sf::Color{243, 185, 54} : sf::Color{42, 48, 45};
+
+    // header row: inning numbers
+    drawText(window, font, "", {panelX, startY}, 11, headerCol);
+    for (int inn = firstInn; inn <= firstInn + kDisplayInnings - 1; ++inn) {
+        const float x = panelX + labelW + (inn - firstInn) * colW;
+        drawText(window, font, std::to_string(inn), {x, startY}, 10, headerCol);
+    }
+    // R H E headers (right-aligned)
+    const float rheX = panelX + labelW + kDisplayInnings * colW + 4.0f;
+    drawText(window, font, "R",  {rheX,            startY}, 10, headerCol);
+    drawText(window, font, "H",  {rheX + colW,     startY}, 10, headerCol);
+    drawText(window, font, "E",  {rheX + colW * 2, startY}, 10, headerCol);
+
+    const float awayY = startY + 14.0f;
+    const float homeY = startY + 26.0f;
+
+    auto abbr3 = [](const std::string& name) {
+        return name.size() >= 3 ? name.substr(0, 3) : name;
+    };
+
+    drawText(window, font, abbr3(engine.awayTeamName()), {panelX, awayY}, 11, awayCol, sf::Text::Bold);
+    drawText(window, font, abbr3(engine.homeTeamName()), {panelX, homeY}, 11, homeCol, sf::Text::Bold);
+
+    for (int i = 0; i < kDisplayInnings; ++i) {
+        const int inn = firstInn + i;
+        const float x = panelX + labelW + i * colW;
+        const std::size_t idx = static_cast<std::size_t>(inn - 1);
+
+        // Away
+        {
+            std::string val = "-";
+            sf::Color col{130, 140, 136};
+            if (idx < awayLS.size() && awayLS[idx] >= 0) {
+                val = std::to_string(awayLS[idx]);
+                col = awayLS[idx] > 0 ? sf::Color{80, 190, 100} : sf::Color{80, 88, 84};
+            } else if (!complete && inn == currInning && state.isTop) {
+                val = "·"; col = {200, 200, 200};
+            }
+            drawText(window, font, val, {x, awayY}, 11, col);
+        }
+        // Home
+        {
+            std::string val = "-";
+            sf::Color col{130, 140, 136};
+            if (idx < homeLS.size() && homeLS[idx] >= 0) {
+                val = std::to_string(homeLS[idx]);
+                col = homeLS[idx] > 0 ? sf::Color{80, 190, 100} : sf::Color{80, 88, 84};
+            } else if (!complete && inn == currInning && !state.isTop) {
+                val = "·"; col = {200, 200, 200};
+            }
+            drawText(window, font, val, {x, homeY}, 11, col);
+        }
+    }
+
+    // R H E totals
+    const auto& abs = engine.awayBoxScore();
+    const auto& hbs = engine.homeBoxScore();
+    drawText(window, font, std::to_string(state.awayScore), {rheX,            awayY}, 12, awayCol, sf::Text::Bold);
+    drawText(window, font, std::to_string(abs.hits),        {rheX + colW,     awayY}, 11, awayCol);
+    drawText(window, font, std::to_string(abs.errors),      {rheX + colW * 2, awayY}, 11,
+             abs.errors > 0 ? sf::Color{220, 72, 66} : awayCol);
+    drawText(window, font, std::to_string(state.homeScore), {rheX,            homeY}, 12, homeCol, sf::Text::Bold);
+    drawText(window, font, std::to_string(hbs.hits),        {rheX + colW,     homeY}, 11, homeCol);
+    drawText(window, font, std::to_string(hbs.errors),      {rheX + colW * 2, homeY}, 11,
+             hbs.errors > 0 ? sf::Color{220, 72, 66} : homeCol);
+}
+
+// ── 打順ストリップ (フィールド下部) ──────────────────────────────────────────
+
+void drawBattingOrderStrip(sf::RenderWindow& window,
+                           const sf::Font& font,
+                           const joji::GameEngine& engine) {
+    const bool isTop    = engine.state().isTop;
+    const auto& lineup  = isTop ? engine.awayLineup() : engine.homeLineup();
+    const int   curIdx  = isTop ? engine.awayBattingIndex() : engine.homeBattingIndex();
+    const int   n       = static_cast<int>(lineup.size());
+    if (n == 0) return;
+
+    constexpr float baseX = 34.0f;
+    constexpr float baseY = 744.0f;
+    constexpr float slotW = 120.0f;
+
+    // 現在 + 次の 6 人まで表示
+    const int show = std::min(7, n);
+    for (int i = 0; i < show; ++i) {
+        const int idx = (curIdx + i) % n;
+        const auto& p = lineup[static_cast<std::size_t>(idx)];
+        const float x = baseX + i * slotW;
+        const bool isCurrent = (i == 0);
+        const sf::Color nameCol = isCurrent ? sf::Color{243, 185, 54} : sf::Color{200, 205, 202};
+        const sf::Color numCol  = isCurrent ? sf::Color{243, 185, 54} : sf::Color{100, 108, 105};
+
+        if (isCurrent) {
+            sf::RectangleShape bg({slotW - 4.0f, 28.0f});
+            bg.setPosition({x, baseY - 4.0f});
+            bg.setFillColor({40, 52, 44, 200});
+            bg.setOutlineColor({243, 185, 54, 160});
+            bg.setOutlineThickness(1.0f);
+            window.draw(bg);
+        }
+
+        drawText(window, font, std::to_string(idx + 1), {x + 2.0f, baseY - 2.0f}, 9, numCol);
+        drawText(window, font,
+                 p.name.size() > 10 ? p.name.substr(0, 10) : p.name,
+                 {x + 2.0f, baseY + 8.0f}, 12, nameCol,
+                 isCurrent ? sf::Text::Bold : sf::Text::Regular);
+    }
+    // チーム名ラベル
+    const std::string tmLabel = (isTop ? engine.awayTeamName() : engine.homeTeamName())
+                               + " batting";
+    drawText(window, font, tmLabel, {baseX, baseY - 16.0f}, 11, {90, 100, 96});
+}
+
+// ── アーセナル表示 (右パネル内、投手情報の右側) ──────────────────────────────
+
+void drawPitcherArsenal(sf::RenderWindow& window,
+                        const sf::Font& font,
+                        const std::map<std::string, int>& arsenal,
+                        float x, float y) {
+    if (arsenal.empty()) return;
+
+    // 球数の多い順にソート
+    std::vector<std::pair<int, std::string>> sorted;
+    sorted.reserve(arsenal.size());
+    for (const auto& [type, cnt] : arsenal) sorted.push_back({cnt, type});
+    std::sort(sorted.rbegin(), sorted.rend());
+
+    const int total = [&] { int s = 0; for (auto& kv : arsenal) s += kv.second; return s; }();
+
+    for (std::size_t i = 0; i < sorted.size(); ++i) {
+        const std::string abbr = sorted[i].second.size() >= 2
+            ? sorted[i].second.substr(0, 2) : sorted[i].second;
+        const float pct = total > 0 ? 100.0f * sorted[i].first / total : 0.0f;
+        std::ostringstream line;
+        line << abbr << " " << sorted[i].first
+             << " " << static_cast<int>(std::round(pct)) << "%";
+        drawText(window, font, line.str(),
+                 {x + i * 72.0f, y}, 11, sf::Color{130, 160, 145});
+    }
+}
+
+// 物理フェンスと同じ極座標モデルで (x,y) を計算
+// angle_deg: CF=0, コーナー=±45 (右=正)
+sf::Vector2f fencePoint(double angle_deg, const joji::BallparkConfig& bp) {
+    const double a   = std::abs(angle_deg);
+    const double r   = a <= 25.0
+        ? bp.centerFieldFenceFeet + (bp.gapFenceFeet - bp.centerFieldFenceFeet) * (a / 25.0)
+        : bp.gapFenceFeet         + (bp.cornerFenceFeet - bp.gapFenceFeet)      * ((a - 25.0) / 20.0);
+    const double rad = angle_deg * 3.14159265358979 / 180.0;
+    return fieldPoint(r * std::sin(rad), r * std::cos(rad));
+}
+
+void drawField(sf::RenderWindow& window, const joji::BallparkConfig& bp) {
     window.clear(Grass);
 
     sf::ConvexShape infield;
@@ -152,22 +383,36 @@ void drawField(sf::RenderWindow& window) {
     infield.setFillColor(Dirt);
     window.draw(infield);
 
+    // ファウルライン: コーナーフェンス端まで
+    const sf::Vector2f lfCorner = fencePoint(-45.0, bp);
+    const sf::Vector2f rfCorner = fencePoint( 45.0, bp);
     sf::VertexArray foulLines(sf::PrimitiveType::Lines, 4);
     foulLines[0].position = fieldPoint(0.0, 0.0);
-    foulLines[1].position = fieldPoint(-310.0, 310.0);
+    foulLines[1].position = lfCorner;
     foulLines[2].position = fieldPoint(0.0, 0.0);
-    foulLines[3].position = fieldPoint(310.0, 310.0);
+    foulLines[3].position = rfCorner;
     for (std::size_t i = 0; i < foulLines.getVertexCount(); ++i) {
         foulLines[i].color = Chalk;
     }
     window.draw(foulLines);
 
-    sf::VertexArray fence(sf::PrimitiveType::LineStrip);
-    for (int x = -300; x <= 300; x += 6) {
-        const double y = 405.0 - 0.0012 * static_cast<double>(x * x);
-        fence.append(sf::Vertex{fieldPoint(x, y), {22, 62, 45}});
+    // 外野壁: 極座標モデル (物理フェンスと完全一致)
+    constexpr float WallThickPx = 9.0f;
+    const sf::Color WallBody{18, 72, 38};
+    const sf::Color WallTop{240, 200, 50};
+
+    sf::VertexArray wallBody(sf::PrimitiveType::TriangleStrip);
+    sf::VertexArray wallCap (sf::PrimitiveType::TriangleStrip);
+    constexpr float TopH = 3.5f;
+    for (int deg = -45; deg <= 45; ++deg) {
+        const sf::Vector2f top = fencePoint(static_cast<double>(deg), bp);
+        wallBody.append(sf::Vertex{top,                                  WallBody});
+        wallBody.append(sf::Vertex{top + sf::Vector2f{0.f, WallThickPx}, WallBody});
+        wallCap .append(sf::Vertex{top,                                  WallTop});
+        wallCap .append(sf::Vertex{top + sf::Vector2f{0.f, TopH},        WallTop});
     }
-    window.draw(fence);
+    window.draw(wallBody);
+    window.draw(wallCap);
 
     for (const auto& base : {fieldPoint(90.0, 90.0), fieldPoint(0.0, 180.0), fieldPoint(-90.0, 90.0), fieldPoint(0.0, 0.0)}) {
         sf::CircleShape marker(8.0f);
@@ -233,9 +478,31 @@ sf::Vector2f runnerPointAt(const joji::RunnerAnimation& animation, float elapsed
     const auto& start = points[idx];
     const auto& end = points[idx + 1];
     const double span = std::max(0.001, end.timeSeconds - start.timeSeconds);
-    const double amount = std::clamp((static_cast<double>(elapsed) - start.timeSeconds) / span, 0.0, 1.0);
+    const double rawAmount = std::clamp((static_cast<double>(elapsed) - start.timeSeconds) / span, 0.0, 1.0);
+    const double amount = rawAmount * rawAmount * (3.0 - 2.0 * rawAmount);
     return fieldPoint(start.x + (end.x - start.x) * amount,
                       start.y + (end.y - start.y) * amount);
+}
+
+const joji::TagPlay* tagForRunner(const joji::AnimationPlan& plan,
+                                  const joji::RunnerAnimation& animation) {
+    for (const auto& tag : plan.tagPlays) {
+        if (tag.runnerName == animation.runnerName && tag.base == animation.toBase) {
+            return &tag;
+        }
+    }
+    return nullptr;
+}
+
+bool isSlidingAtTag(const joji::AnimationPlan& plan,
+                    const joji::RunnerAnimation& animation,
+                    float elapsed) {
+    const joji::TagPlay* tag = tagForRunner(plan, animation);
+    if (!tag) {
+        return false;
+    }
+    const float arrival = static_cast<float>(tag->runnerArrivalTime);
+    return elapsed >= arrival - 0.28f && elapsed <= arrival + 0.16f;
 }
 
 std::vector<std::string> animatedRunnerNames(const joji::AnimationPlan& plan) {
@@ -268,13 +535,29 @@ void drawRunnerAnimations(sf::RenderWindow& window,
         }
 
         const sf::Vector2f current = runnerPointAt(animation, elapsed);
-        sf::CircleShape runner(13.0f);
-        runner.setOrigin({13.0f, 13.0f});
-        runner.setPosition(current);
-        runner.setFillColor(animation.scored ? sf::Color{80, 190, 100} : sf::Color{252, 203, 88});
-        runner.setOutlineColor(Ink);
-        runner.setOutlineThickness(2.0f);
-        window.draw(runner);
+        if (isSlidingAtTag(plan, animation, elapsed)) {
+            sf::CircleShape slide(12.0f);
+            slide.setOrigin({12.0f, 12.0f});
+            slide.setScale({1.65f, 0.58f});
+            slide.setPosition(current);
+            slide.setFillColor(animation.scored ? sf::Color{80, 190, 100} : sf::Color{252, 203, 88});
+            slide.setOutlineColor(Ink);
+            slide.setOutlineThickness(2.0f);
+            window.draw(slide);
+
+            sf::VertexArray scrape(sf::PrimitiveType::Lines, 2);
+            scrape[0] = sf::Vertex{{current.x - 28.0f, current.y + 7.0f}, sf::Color{238, 232, 216, 95}};
+            scrape[1] = sf::Vertex{{current.x - 7.0f, current.y + 3.0f}, sf::Color{238, 232, 216, 35}};
+            window.draw(scrape);
+        } else {
+            sf::CircleShape runner(13.0f);
+            runner.setOrigin({13.0f, 13.0f});
+            runner.setPosition(current);
+            runner.setFillColor(animation.scored ? sf::Color{80, 190, 100} : sf::Color{252, 203, 88});
+            runner.setOutlineColor(Ink);
+            runner.setOutlineThickness(2.0f);
+            window.draw(runner);
+        }
 
         drawText(window,
                  font,
@@ -356,31 +639,54 @@ void drawPitchAnimation(sf::RenderWindow& window,
         ++idx;
     }
 
-    sf::VertexArray trail(sf::PrimitiveType::LineStrip);
+    const sf::Color pitchCol = pitch.isBall    ? sf::Color{54, 151, 230}
+                             : pitch.isInPlay  ? sf::Color{80, 190, 100}
+                                               : sf::Color{220, 72, 66};
+
+    // テーパー付きトレイル (TriangleStrip: テール透明0px → ヘッド3px)
+    sf::VertexArray trail(sf::PrimitiveType::TriangleStrip);
+    sf::Vector2f prevPerp{1.f, 0.f};
     for (std::size_t i = 0; i <= idx; ++i) {
-        sf::Color color = pitch.isBall ? sf::Color{54, 151, 230}
-                        : pitch.isInPlay ? sf::Color{80, 190, 100}
-                                         : sf::Color{220, 72, 66};
-        color.a = static_cast<std::uint8_t>(120 + 105 * i / std::max<std::size_t>(idx + 1, 1));
-        trail.append(sf::Vertex{pitchPoint(points[i]), color});
+        const float progress = static_cast<float>(i)
+            / static_cast<float>(std::max(idx, std::size_t{1}));
+        const float halfW = progress * 3.0f;
+        const std::uint8_t alpha = static_cast<std::uint8_t>(185.0f * progress);
+        const sf::Color col{pitchCol.r, pitchCol.g, pitchCol.b, alpha};
+        const sf::Vector2f pos = pitchPoint(points[i]);
+
+        sf::Vector2f perp = prevPerp;
+        if (i > 0) {
+            const sf::Vector2f prev = pitchPoint(points[i - 1]);
+            sf::Vector2f dir{pos.x - prev.x, pos.y - prev.y};
+            const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+            if (len > 0.1f) {
+                dir.x /= len; dir.y /= len;
+                perp = {-dir.y, dir.x};
+                prevPerp = perp;
+            }
+        }
+        trail.append(sf::Vertex{pos + perp * halfW, col});
+        trail.append(sf::Vertex{pos - perp * halfW, col});
     }
     window.draw(trail);
 
     const auto& current = points[idx];
     const float height = static_cast<float>(std::clamp(current.z, 0.0, 7.0) / 7.0);
-    sf::CircleShape shadow(6.0f);
-    shadow.setOrigin({6.0f, 6.0f});
+
+    // シャドウ: 高さに応じてわずかに拡大
+    const float shadowR = 5.5f + height * 1.5f;
+    sf::CircleShape shadow(shadowR);
+    shadow.setOrigin({shadow.getRadius(), shadow.getRadius()});
     shadow.setPosition(fieldPoint(current.x, current.y));
-    shadow.setFillColor({10, 30, 20, 75});
+    shadow.setFillColor({10, 30, 20, static_cast<std::uint8_t>(80 - height * 30)});
     window.draw(shadow);
 
+    // ボール本体
     sf::CircleShape ball(6.5f + height * 2.0f);
     ball.setOrigin({ball.getRadius(), ball.getRadius()});
     ball.setPosition(pitchPoint(current));
     ball.setFillColor(sf::Color::White);
-    ball.setOutlineColor(pitch.isBall ? sf::Color{54, 151, 230}
-                         : pitch.isInPlay ? sf::Color{80, 190, 100}
-                                          : sf::Color{220, 72, 66});
+    ball.setOutlineColor(pitchCol);
     ball.setOutlineThickness(2.0f);
     window.draw(ball);
 }
@@ -402,7 +708,6 @@ void drawTrajectory(sf::RenderWindow& window,
         return;
     }
 
-    // After the first throw starts, use the ball's final resting point and stop the moving dot
     const bool throwStarted = elapsed >= hideAfter;
     const float drawElapsed = throwStarted ? hideAfter : elapsed;
 
@@ -413,60 +718,190 @@ void drawTrajectory(sf::RenderWindow& window,
     }
 
     const bool groundTrajectory = isGroundTrajectory(play, plan);
-    const bool airTrajectory = isAirTrajectory(play, plan);
-    const sf::Color baseColor = groundTrajectory ? sf::Color{214, 142, 72}
-                              : airTrajectory ? sf::Color{238, 232, 216}
-                                              : outcomeColor(play.type);
+    const bool airTrajectory    = isAirTrajectory(play, plan);
+    const float liftFactor      = airTrajectory ? airLiftFactor(plan) : 0.0f;
 
-    sf::VertexArray trail(sf::PrimitiveType::LineStrip);
-    for (std::size_t i = 0; i <= idx; ++i) {
-        sf::Color color = baseColor;
-        const std::uint8_t baseAlpha = throwStarted ? 55u : 110u;
-        color.a = static_cast<std::uint8_t>(baseAlpha + (throwStarted ? 0u : 145u) * i /
-                                            std::max<std::size_t>(idx + 1, 1));
-        trail.append(sf::Vertex{battedBallDrawPoint(points[i], airTrajectory), color});
+    // 壁カロム判定: フェンス未越え かつ 壁接触高度 > 0
+    const bool isWallCarom       = !plan.battedBall.crossesFence
+                                   && plan.battedBall.landingPoint.z > 0.5;
+    const double wallContactTime = isWallCarom
+                                   ? plan.battedBall.landingPoint.timeSeconds : 1e9;
+
+    // ホームラン: 物理計算済みのフェンス通過時刻を使ってクリップ
+    const double fenceCrossSeconds = plan.battedBall.fenceCrossSeconds; // -1 = 非HR
+    const bool   isHR              = plan.battedBall.crossesFence && fenceCrossSeconds >= 0.0;
+    const bool   ballPastFence     = isHR && elapsed >= static_cast<float>(fenceCrossSeconds);
+
+    // トレイルをフェンス通過時刻の直前インデックスまでに制限
+    std::size_t trailEnd = idx;
+    if (isHR) {
+        while (trailEnd > 0
+               && points[trailEnd].timeSeconds > fenceCrossSeconds + 0.05) {
+            --trailEnd;
+        }
+    }
+
+    const sf::Color flightColor = groundTrajectory ? sf::Color{214, 142, 72}
+                                : airTrajectory    ? sf::Color{238, 232, 216}
+                                                   : sf::Color{238, 232, 216}; // 未分類も白
+    const sf::Color caromColor{214, 142, 72};
+
+    // ── テーパー付きトレイル (TriangleStrip) ─────────────────────────────
+    const float maxHalfWidth = groundTrajectory ? 2.0f : 3.0f;
+
+    sf::VertexArray trail(sf::PrimitiveType::TriangleStrip);
+    sf::Vector2f prevPerp{0.f, 1.f};
+
+    for (std::size_t i = 0; i <= trailEnd; ++i) {
+        const float progress = static_cast<float>(i)
+            / static_cast<float>(std::max(trailEnd, std::size_t{1}));
+        const float halfW = progress * maxHalfWidth;
+
+        const bool inCarom   = isWallCarom && points[i].timeSeconds > wallContactTime + 0.001;
+        const sf::Color& baseCol = inCarom ? caromColor : flightColor;
+
+        // HR: trailEnd 付近でトレイルを徐々に透明にして消える
+        float alphaScale = 1.0f;
+        if (isHR && i + 5 > trailEnd) {
+            alphaScale = static_cast<float>(trailEnd - i + 5) / 5.0f;
+            alphaScale = std::clamp(alphaScale, 0.0f, 1.0f);
+        }
+        const std::uint8_t alpha = throwStarted
+            ? static_cast<std::uint8_t>(35.0f * progress * alphaScale)
+            : static_cast<std::uint8_t>(200.0f * progress * alphaScale);
+        sf::Color col{baseCol.r, baseCol.g, baseCol.b, alpha};
+
+        const bool useAirLift = airTrajectory && !inCarom;
+        const sf::Vector2f pos = battedBallDrawPoint(points[i], useAirLift, liftFactor);
+
+        // 進行方向の垂直ベクトル (閾値 0.1px に緩和)
+        sf::Vector2f perp = prevPerp;
+        if (i > 0) {
+            const bool prevCarom = isWallCarom
+                && points[i-1].timeSeconds > wallContactTime + 0.001;
+            const sf::Vector2f prev = battedBallDrawPoint(
+                points[i-1], airTrajectory && !prevCarom, liftFactor);
+            sf::Vector2f dir{pos.x - prev.x, pos.y - prev.y};
+            const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+            if (len > 0.1f) {
+                dir.x /= len; dir.y /= len;
+                perp = {-dir.y, dir.x};
+                prevPerp = perp;
+            }
+        }
+
+        trail.append(sf::Vertex{pos + perp * halfW, col});
+        trail.append(sf::Vertex{pos - perp * halfW, col});
     }
     window.draw(trail);
 
+    // ── グラウンドボール: ダスト粒子 ─────────────────────────────────────
     if (groundTrajectory) {
-        for (std::size_t i = 2; i <= idx; i += 6) {
+        for (std::size_t i = 2; i <= trailEnd; i += 6) {
             sf::CircleShape dust(3.0f);
             dust.setOrigin({3.0f, 3.0f});
             dust.setPosition(fieldPoint(points[i].x, points[i].y));
-            dust.setFillColor({196, 126, 62, 95});
+            dust.setFillColor({196, 126, 62, 90});
             window.draw(dust);
         }
     }
 
-    // Hide moving ball dot once throw has started
-    if (!throwStarted) {
-        const auto& current = points[idx];
-        const float height = static_cast<float>(std::min(current.z, 180.0) / 180.0);
-        const sf::Vector2f shadowPos = fieldPoint(current.x, current.y);
-        const sf::Vector2f ballPos = battedBallDrawPoint(current, airTrajectory);
+    // ── 壁衝突フラッシュリング ────────────────────────────────────────────
+    if (isWallCarom && !throwStarted) {
+        const float contactAge = elapsed - static_cast<float>(wallContactTime);
+        if (contactAge >= 0.0f && contactAge < 0.35f) {
+            const float fade = 1.0f - contactAge / 0.35f;
+            const sf::Vector2f wallPos = fieldPoint(
+                plan.battedBall.landingPoint.x,
+                plan.battedBall.landingPoint.y);
+            sf::CircleShape ring(12.0f + contactAge * 40.0f);
+            ring.setOrigin({ring.getRadius(), ring.getRadius()});
+            ring.setPosition(wallPos);
+            ring.setFillColor(sf::Color::Transparent);
+            ring.setOutlineColor({240, 200, 80,
+                static_cast<std::uint8_t>(200.0f * fade)});
+            ring.setOutlineThickness(2.5f);
+            window.draw(ring);
+        }
+    }
 
-        sf::CircleShape shadow(groundTrajectory ? 5.0f : 8.0f + height * 4.0f);
+    // ── ホームラン: フェンス通過フラッシュ ───────────────────────────────
+    if (isHR) {
+        const float crossAge = elapsed - static_cast<float>(fenceCrossSeconds);
+        if (crossAge >= 0.0f && crossAge < 0.55f) {
+            const float fade = 1.0f - crossAge / 0.55f;
+            // フェンス通過点: trailEnd 時点のボール位置
+            const sf::Vector2f fencePos = fieldPoint(
+                points[trailEnd].x, points[trailEnd].y);
+            for (int ri = 0; ri < 2; ++ri) {
+                const float r = 14.0f + crossAge * (55.0f + ri * 25.0f);
+                sf::CircleShape ring(r);
+                ring.setOrigin({ring.getRadius(), ring.getRadius()});
+                ring.setPosition(fencePos);
+                ring.setFillColor(sf::Color::Transparent);
+                ring.setOutlineColor({243, 185, 54,
+                    static_cast<std::uint8_t>(210.0f * fade / (ri + 1))});
+                ring.setOutlineThickness(2.5f);
+                window.draw(ring);
+            }
+        }
+    }
+
+    // ── 移動中のボールドット ──────────────────────────────────────────────
+    if (!throwStarted && !ballPastFence) {
+        const auto& current  = points[idx];
+        const bool inCarom   = isWallCarom && current.timeSeconds > wallContactTime + 0.001;
+        const bool useAirLift = airTrajectory && !inCarom;
+        const float height   = static_cast<float>(
+            std::clamp(current.z, 0.0, 180.0) / 180.0);
+
+        const sf::Vector2f shadowPos = fieldPoint(current.x, current.y);
+        const sf::Vector2f ballPos   = battedBallDrawPoint(current, useAirLift, liftFactor);
+
+        // シャドウ (高度が上がるほど大きく・薄く)
+        const bool isGround = groundTrajectory || inCarom;
+        const float shadowR = isGround ? 5.0f : 7.0f + height * 5.0f;
+        sf::CircleShape shadow(shadowR);
         shadow.setOrigin({shadow.getRadius(), shadow.getRadius()});
         shadow.setPosition(shadowPos);
-        shadow.setFillColor(groundTrajectory ? sf::Color{110, 70, 38, 90}
-                                             : sf::Color{10, 30, 20, 70});
+        shadow.setFillColor(isGround
+            ? sf::Color{110, 70, 38, 90}
+            : sf::Color{10, 30, 20, static_cast<std::uint8_t>(80 - height * 50)});
         window.draw(shadow);
 
-        if (airTrajectory && height > 0.08f) {
+        // 高度ライン (liftFactor > 0.06 かつ十分な高さがある場合のみ)
+        if (useAirLift && liftFactor > 0.06f && height > 0.06f) {
             sf::VertexArray heightLine(sf::PrimitiveType::Lines, 2);
-            heightLine[0] = sf::Vertex{shadowPos, sf::Color{255, 255, 255, 45}};
-            heightLine[1] = sf::Vertex{ballPos, sf::Color{255, 255, 255, 95}};
+            heightLine[0] = sf::Vertex{shadowPos, sf::Color{255, 255, 255, 30}};
+            heightLine[1] = sf::Vertex{ballPos,   sf::Color{255, 255, 255, 90}};
             window.draw(heightLine);
         }
 
-        sf::CircleShape ball(groundTrajectory ? 5.5f : 7.0f + height * 5.0f);
+        // ボール本体 (ラインドライブは小さめ固定、フライは高さで拡大)
+        const float ballR = isGround ? 5.5f
+                          : liftFactor < 0.10f ? 6.0f               // low liner
+                          : 7.0f + height * 5.0f;                   // fly ball
+        sf::CircleShape ball(ballR);
         ball.setOrigin({ball.getRadius(), ball.getRadius()});
         ball.setPosition(ballPos);
         ball.setFillColor(sf::Color::White);
-        ball.setOutlineColor(groundTrajectory ? sf::Color{174, 116, 64} : outcomeColor(play.type));
-        ball.setOutlineThickness(groundTrajectory ? 1.5f : 2.0f);
+        ball.setOutlineColor(isGround
+            ? sf::Color{174, 116, 64}
+            : outcomeColor(play.type));
+        ball.setOutlineThickness(isGround ? 1.5f : 2.0f);
         window.draw(ball);
     }
+}
+
+// Screen position for a throw at interpolation parameter t ∈ [0,1],
+// incorporating the parabolic arc height (lifts ball upward on screen).
+sf::Vector2f throwArcPoint(const joji::ThrowAnimation& thr, float t) {
+    const float px = thr.points[0].x + (thr.points[1].x - thr.points[0].x) * t;
+    const float py = thr.points[0].y + (thr.points[1].y - thr.points[0].y) * t;
+    const float arcZ = static_cast<float>(thr.arcHeightFeet) * 4.0f * t * (1.0f - t);
+    const sf::Vector2f base = fieldPoint(px, py);
+    // Lift: arc height in field-feet × FieldScale × 0.7 (visual perspective compression)
+    return {base.x, base.y - arcZ * FieldScale * 0.7f};
 }
 
 void drawThrowAnimations(sf::RenderWindow& window,
@@ -478,29 +913,120 @@ void drawThrowAnimations(sf::RenderWindow& window,
         const float endT   = startT + static_cast<float>(thr.durationSeconds);
         if (elapsed < startT || elapsed > endT + 0.3f) continue;
 
-        const sf::Vector2f from = fieldPoint(thr.points[0].x, thr.points[0].y);
-        const sf::Vector2f to   = fieldPoint(thr.points[1].x, thr.points[1].y);
+        const sf::Color guideColor = thr.badThrow
+            ? sf::Color{235, 116, 48, 90}
+            : sf::Color{255, 255, 255, 45};
 
-        // Static guide line (faint white)
-        sf::VertexArray line(sf::PrimitiveType::Lines, 2);
-        line[0] = sf::Vertex{from, sf::Color{255, 255, 255, 55}};
-        line[1] = sf::Vertex{to,   sf::Color{255, 255, 255, 55}};
-        window.draw(line);
+        // Parabolic guide arc (16-segment polyline)
+        constexpr int ArcSegs = 16;
+        sf::VertexArray arc(sf::PrimitiveType::LineStrip, ArcSegs + 1);
+        for (int i = 0; i <= ArcSegs; ++i) {
+            const float u = static_cast<float>(i) / ArcSegs;
+            arc[i] = sf::Vertex{throwArcPoint(thr, u), guideColor};
+        }
+        window.draw(arc);
 
-        // Thrown ball dot moving along line
+        // Ball dot moving along the arc
         if (elapsed >= startT && elapsed <= endT) {
             const float t = std::clamp((elapsed - startT) /
                                        static_cast<float>(thr.durationSeconds), 0.0f, 1.0f);
-            const sf::Vector2f pos{from.x + (to.x - from.x) * t,
-                                   from.y + (to.y - from.y) * t};
+            const sf::Vector2f pos = throwArcPoint(thr, t);
+
+            // Shadow on the field directly below the arc ball
+            const float shadowR = 4.0f + static_cast<float>(thr.arcHeightFeet) * 4.0f * t * (1.0f-t) * 0.06f;
+            sf::CircleShape shadow(shadowR);
+            shadow.setOrigin({shadow.getRadius(), shadow.getRadius()});
+            shadow.setPosition(fieldPoint(
+                thr.points[0].x + (thr.points[1].x - thr.points[0].x) * t,
+                thr.points[0].y + (thr.points[1].y - thr.points[0].y) * t));
+            shadow.setFillColor({10, 30, 20, 55});
+            window.draw(shadow);
+
             sf::CircleShape ball(5.0f);
             ball.setOrigin({5.0f, 5.0f});
             ball.setPosition(pos);
-            ball.setFillColor(sf::Color::White);
-            ball.setOutlineColor(sf::Color{200, 220, 255, 200});
+            ball.setFillColor(thr.badThrow ? sf::Color{255, 205, 92} : sf::Color::White);
+            ball.setOutlineColor(thr.badThrow
+                ? sf::Color{220, 72, 66, 230}
+                : sf::Color{200, 220, 255, 200});
             ball.setOutlineThickness(1.5f);
             window.draw(ball);
         }
+    }
+}
+
+sf::Vector2f tagBasePoint(int base) {
+    switch (base) {
+        case 1: return fieldPoint(90.0, 90.0);
+        case 2: return fieldPoint(0.0, 180.0);
+        case 3: return fieldPoint(-90.0, 90.0);
+        case 4: return fieldPoint(0.0, 0.0);
+        default: return fieldPoint(0.0, 0.0);
+    }
+}
+
+void drawTagFeedback(sf::RenderWindow& window,
+                     const sf::Font& font,
+                     const joji::AnimationPlan& plan,
+                     float elapsed) {
+    constexpr float VisibleSeconds = 0.75f;
+    for (const auto& tag : plan.tagPlays) {
+        const sf::Vector2f pos = tagBasePoint(tag.base);
+        const float catchTime = static_cast<float>(tag.ballArrivalTime);
+        const float catchAge = elapsed - catchTime;
+        if (catchAge >= 0.0f && catchAge <= 0.28f) {
+            const float fade = 1.0f - catchAge / 0.28f;
+            sf::CircleShape catchRing(18.0f + catchAge * 16.0f);
+            catchRing.setOrigin({catchRing.getRadius(), catchRing.getRadius()});
+            catchRing.setPosition(pos);
+            catchRing.setFillColor(sf::Color::Transparent);
+            catchRing.setOutlineColor(sf::Color{255, 255, 255,
+                static_cast<std::uint8_t>(210 * fade)});
+            catchRing.setOutlineThickness(3.0f);
+            window.draw(catchRing);
+        }
+
+        const float eventTime = static_cast<float>(
+            std::max(tag.ballArrivalTime, tag.runnerArrivalTime) + tag.tagTime);
+        const float age = elapsed - eventTime;
+        if (age < 0.0f || age > VisibleSeconds) {
+            continue;
+        }
+
+        const float fade = 1.0f - age / VisibleSeconds;
+        const float pulse = 1.0f + age * 0.9f;
+        const sf::Color color = tag.runnerSafe
+            ? sf::Color{80, 190, 100, static_cast<std::uint8_t>(220 * fade)}
+            : sf::Color{220, 72, 66, static_cast<std::uint8_t>(230 * fade)};
+
+        sf::CircleShape ring(25.0f * pulse);
+        ring.setOrigin({ring.getRadius(), ring.getRadius()});
+        ring.setPosition(pos);
+        ring.setFillColor(sf::Color::Transparent);
+        ring.setOutlineColor(color);
+        ring.setOutlineThickness(4.0f);
+        window.draw(ring);
+
+        sf::Text label(font, tag.runnerSafe ? "SAFE" : "OUT", 17);
+        label.setStyle(sf::Text::Bold);
+        label.setFillColor(color);
+        const sf::FloatRect bounds = label.getLocalBounds();
+        label.setOrigin({bounds.position.x + bounds.size.x / 2.0f,
+                         bounds.position.y + bounds.size.y / 2.0f});
+        label.setPosition({pos.x, pos.y - 38.0f - age * 8.0f});
+        window.draw(label);
+
+        std::ostringstream timing;
+        timing << "R " << std::fixed << std::setprecision(2) << tag.runnerArrivalTime
+               << " / B " << tag.ballArrivalTime;
+        sf::Text timingLabel(font, timing.str(), 10);
+        timingLabel.setFillColor(sf::Color{255, 255, 255,
+            static_cast<std::uint8_t>(190 * fade)});
+        const sf::FloatRect timingBounds = timingLabel.getLocalBounds();
+        timingLabel.setOrigin({timingBounds.position.x + timingBounds.size.x / 2.0f,
+                               timingBounds.position.y + timingBounds.size.y / 2.0f});
+        timingLabel.setPosition({pos.x, pos.y - 17.0f - age * 8.0f});
+        window.draw(timingLabel);
     }
 }
 
@@ -652,34 +1178,32 @@ void drawScoreboard(sf::RenderWindow& window,
                     const std::optional<joji::PlayResult>& currentPlay,
                     const joji::GameEngine& engine,
                     bool complete) {
-    drawText(window, font, "Joji Baseball", {960.0f, 30.0f}, 30, Ink, sf::Text::Bold);
-    drawText(window, font, halfLabel(state), {960.0f, 78.0f}, 22, {56, 76, 70}, sf::Text::Bold);
+    drawText(window, font, "Joji Baseball", {960.0f, 12.0f}, 24, Ink, sf::Text::Bold);
+    drawText(window, font, halfLabel(state), {960.0f, 44.0f}, 18, {56, 76, 70}, sf::Text::Bold);
     if (complete)
-        drawText(window, font, "Final", {1168.0f, 78.0f}, 22, {220, 72, 66}, sf::Text::Bold);
+        drawText(window, font, "FINAL", {1168.0f, 44.0f}, 17, {220, 72, 66}, sf::Text::Bold);
 
-    drawText(window, font, fitLine(engine.awayTeamName(), 18), {960.0f, 130.0f}, 22, Ink);
-    drawText(window, font, std::to_string(state.awayScore), {1210.0f, 130.0f}, 24, Ink, sf::Text::Bold);
-    drawText(window, font, fitLine(engine.homeTeamName(), 18), {960.0f, 166.0f}, 22, Ink);
-    drawText(window, font, std::to_string(state.homeScore), {1210.0f, 166.0f}, 24, Ink, sf::Text::Bold);
+    // ラインスコアは drawLineScore で描画 (y=118 周辺)
+    // ─── drawLineScore はここより前に呼ばれているため省略 ───
 
-    drawText(window, font, "Outs", {960.0f, 220.0f}, 18, {82, 93, 88}, sf::Text::Bold);
+    drawText(window, font, "Outs", {960.0f, 168.0f}, 15, {82, 93, 88}, sf::Text::Bold);
     for (int i = 0; i < 3; ++i) {
-        sf::CircleShape outLight(9.0f);
-        outLight.setOrigin({9.0f, 9.0f});
-        outLight.setPosition({1025.0f + i * 30.0f, 232.0f});
+        sf::CircleShape outLight(8.0f);
+        outLight.setOrigin({8.0f, 8.0f});
+        outLight.setPosition({1010.0f + i * 26.0f, 178.0f});
         outLight.setFillColor(i < state.outs ? sf::Color{220, 72, 66} : sf::Color{206, 201, 186});
         window.draw(outLight);
     }
 
-    // ── 現在の投手 (HOT/COLD + ERA + 球数) ──────────────────────────────
+    // ── 現在の投手 (HOT/COLD + ERA + 球数 + アーセナル) ──────────────────
     const joji::Player& pitcher = engine.currentPitcher();
     const int pitchCount = engine.currentPitcherPitchCount();
     const double pitcherForm = engine.pitcherFormValue();
     const double era = engine.currentPitcherERA();
 
     const sf::Color pitcherNameColor = formColor(pitcherForm);
-    drawText(window, font, fitLine(pitcher.name, 18), {960.0f, 252.0f}, 16, pitcherNameColor, sf::Text::Bold);
-    drawFormBadge(window, font, pitcherForm, {1160.0f, 253.0f});
+    drawText(window, font, fitLine(pitcher.name, 18), {960.0f, 196.0f}, 15, pitcherNameColor, sf::Text::Bold);
+    drawFormBadge(window, font, pitcherForm, {1168.0f, 197.0f});
 
     const sf::Color pitchCountColor = pitchCount > 100 ? sf::Color{220, 72, 66}
                                     : pitchCount >  75 ? sf::Color{235, 116, 48}
@@ -689,7 +1213,40 @@ void drawScoreboard(sf::RenderWindow& window,
     const std::string pitcherMeta = joji::toString(pitcher.pitcherRole)
                                   + "  " + std::to_string(pitchCount) + "P"
                                   + "  ERA " + eraStr.str();
-    drawText(window, font, fitLine(pitcherMeta, 30), {960.0f, 272.0f}, 13, pitchCountColor);
+    drawText(window, font, fitLine(pitcherMeta, 30), {960.0f, 213.0f}, 12, pitchCountColor);
+
+    // 球速疲労トレンドバー
+    {
+        const double velDrop = engine.currentPitcherVelocityDrop();
+        std::ostringstream velStr;
+        if (velDrop >= -0.3) {
+            velStr << "Vel  --";
+        } else {
+            velStr << "Vel " << std::fixed << std::setprecision(1) << velDrop << " mph";
+        }
+        // Color: green→yellow→red as fatigue grows
+        const sf::Color velColor = (velDrop > -1.5) ? sf::Color{82, 150, 90}
+                                 : (velDrop > -3.5) ? sf::Color{215, 170, 40}
+                                                    : sf::Color{210, 75, 60};
+        drawText(window, font, velStr.str(), {960.0f, 226.0f}, 11, velColor);
+
+        // Small fatigue bar (max drop ≈ 8 mph shown as full bar)
+        const float barW = 120.0f;
+        const float fill = std::clamp(static_cast<float>(-velDrop / 8.0), 0.0f, 1.0f);
+        sf::RectangleShape barBg({barW, 4.0f});
+        barBg.setPosition({1060.0f, 229.0f});
+        barBg.setFillColor({50, 55, 52});
+        window.draw(barBg);
+        if (fill > 0.0f) {
+            sf::RectangleShape barFill({barW * fill, 4.0f});
+            barFill.setPosition({1060.0f, 229.0f});
+            barFill.setFillColor(velColor);
+            window.draw(barFill);
+        }
+    }
+
+    // 球種アーセナル
+    drawPitcherArsenal(window, font, engine.currentPitcherArsenal(), 960.0f, 240.0f);
 
     // ── 打者セクション ───────────────────────────────────────────────────
     const bool atBatActive = engine.isAtBatInProgress() || engine.hasPendingAtBatResult();
@@ -697,15 +1254,15 @@ void drawScoreboard(sf::RenderWindow& window,
         const joji::AtBatState& ab = engine.currentAtBat();
         const double batterForm = engine.batterFormValue(ab.batter.name);
 
-        drawText(window, font, "At bat", {960.0f, 293.0f}, 14, {82, 93, 88}, sf::Text::Bold);
+        drawText(window, font, "At bat", {960.0f, 244.0f}, 13, {82, 93, 88}, sf::Text::Bold);
         const sf::Color batterColor = formColor(batterForm);
-        drawText(window, font, fitLine(ab.batter.name, 22), {960.0f, 312.0f}, 22, batterColor, sf::Text::Bold);
-        drawFormBadge(window, font, batterForm, {1160.0f, 314.0f});
+        drawText(window, font, fitLine(ab.batter.name, 22), {960.0f, 260.0f}, 20, batterColor, sf::Text::Bold);
+        drawFormBadge(window, font, batterForm, {1168.0f, 261.0f});
 
         const std::string countStr = "Count  " + std::to_string(ab.count.balls)
                                      + " - " + std::to_string(ab.count.strikes)
                                      + "  (#" + std::to_string(ab.pitchNumber - 1) + ")";
-        drawText(window, font, countStr, {960.0f, 342.0f}, 16, {56, 76, 70}, sf::Text::Bold);
+        drawText(window, font, countStr, {960.0f, 284.0f}, 14, {56, 76, 70}, sf::Text::Bold);
 
         if (engine.hasPendingAtBatResult() && ab.finalOutcome.has_value()) {
             std::string outcomeStr;
@@ -715,51 +1272,161 @@ void drawScoreboard(sf::RenderWindow& window,
                 case joji::AtBatOutcome::HitByPitch:  outcomeStr = "Hit By Pitch"; break;
                 case joji::AtBatOutcome::InPlay:      outcomeStr = "In Play";     break;
             }
-            drawText(window, font, outcomeStr, {960.0f, 370.0f}, 20,
+            drawText(window, font, outcomeStr, {960.0f, 308.0f}, 19,
                      *ab.finalOutcome == joji::AtBatOutcome::InPlay
                          ? sf::Color{80, 190, 100}
                          : sf::Color{220, 72, 66},
                      sf::Text::Bold);
-            drawText(window, font, "Space to apply", {960.0f, 400.0f}, 14, {82, 93, 88});
+            drawText(window, font, "Space to apply", {960.0f, 334.0f}, 13, {82, 93, 88});
         }
     } else if (currentPlay.has_value()) {
         const auto& play = *currentPlay;
-        drawText(window, font, "Result", {960.0f, 293.0f}, 14, {82, 93, 88}, sf::Text::Bold);
-        drawText(window, font, fitLine(play.batterName, 22), {960.0f, 312.0f}, 22, Ink, sf::Text::Bold);
-        drawText(window, font, joji::toString(play.type), {960.0f, 340.0f}, 20, outcomeColor(play.type), sf::Text::Bold);
+        drawText(window, font, "Result", {960.0f, 244.0f}, 13, {82, 93, 88}, sf::Text::Bold);
+        drawText(window, font, fitLine(play.batterName, 22), {960.0f, 260.0f}, 20, Ink, sf::Text::Bold);
+        drawText(window, font, joji::toString(play.type), {960.0f, 283.0f}, 18, outcomeColor(play.type), sf::Text::Bold);
 
         if (play.battedBall.estimatedDistance > 0.0) {
             std::ostringstream details;
             details << static_cast<int>(std::round(play.battedBall.estimatedDistance)) << " ft  "
                     << play.battedBall.classification;
-            drawText(window, font, fitLine(details.str(), 28), {960.0f, 368.0f}, 16, {47, 58, 54});
+            drawText(window, font, fitLine(details.str(), 28), {960.0f, 308.0f}, 14, {47, 58, 54});
 
             std::ostringstream metrics;
             metrics << "EV " << static_cast<int>(std::round(play.battedBall.exitVelocity))
                     << "  LA " << static_cast<int>(std::round(play.battedBall.launchAngle))
                     << "  Spray " << static_cast<int>(std::round(play.battedBall.sprayAngle));
-            drawText(window, font, fitLine(metrics.str(), 31), {960.0f, 392.0f}, 15, {47, 58, 54});
+            drawText(window, font, fitLine(metrics.str(), 31), {960.0f, 326.0f}, 13, {47, 58, 54});
 
             if (play.fielderId >= 0) {
                 std::ostringstream fielder;
                 fielder << "Fielder " << play.fielderName
                         << "  " << std::fixed << std::setprecision(1)
                         << play.fielderTravelTime << "/" << play.fieldingAvailableTime << "s";
-                drawText(window, font, fitLine(fielder.str(), 31), {960.0f, 416.0f}, 14, {47, 58, 54});
+                drawText(window, font, fitLine(fielder.str(), 31), {960.0f, 344.0f}, 13, {47, 58, 54});
+            }
+            if (!play.defensiveDecision.reason.empty()) {
+                std::ostringstream decision;
+                decision << "Decision ";
+                if (play.defensiveDecision.holdBall) {
+                    decision << "hold";
+                } else {
+                    decision << "throw " << play.defensiveDecision.chosenTargetBase << "B";
+                    if (play.throwDecision.useCutoff) {
+                        decision << " via " << play.throwDecision.cutoffFielderName;
+                    }
+                    if (play.throwDecision.badThrow) {
+                        decision << " bad throw";
+                        if (play.throwingError) {
+                            decision << " E";
+                        }
+                    }
+                }
+                decision << "  " << play.defensiveDecision.reason;
+                drawText(window,
+                         font,
+                         fitLine(decision.str(), 35),
+                         {960.0f, 362.0f},
+                         12,
+                         play.defensiveDecision.holdBall
+                             ? sf::Color{100, 110, 106}
+                             : sf::Color{80, 190, 100});
             }
         }
     } else if (!complete) {
-        drawText(window, font, "Ready", {960.0f, 293.0f}, 14, {82, 93, 88}, sf::Text::Bold);
-        drawText(window, font, "Space to pitch", {960.0f, 315.0f}, 22, Ink, sf::Text::Bold);
+        drawText(window, font, "Ready", {960.0f, 244.0f}, 13, {82, 93, 88}, sf::Text::Bold);
+        drawText(window, font, "Space to pitch", {960.0f, 262.0f}, 20, Ink, sf::Text::Bold);
+    }
+
+    // ── 試合終了: 打撃成績 + 守備成績 (右パネル中段) ────────────────────
+    if (complete) {
+        const auto& awayStats = engine.awayPlayerStats();
+        const auto& homeStats = engine.homePlayerStats();
+
+        float y = 244.0f;
+        const float xLabel = 960.0f;
+        const float xAB    = 1082.0f;
+        const float xH     = 1108.0f;
+        const float xHR    = 1132.0f;
+        const float xRBI   = 1156.0f;
+        const float xOPS   = 1192.0f;
+
+        auto drawBattingSection = [&](const std::vector<joji::PlayerBoxScore>& stats,
+                                      const std::string& teamName) {
+            drawText(window, font, fitLine(teamName, 16), {xLabel, y}, 13,
+                     {100, 110, 106}, sf::Text::Bold);
+            drawText(window, font, "AB", {xAB,  y}, 11, {100, 110, 106});
+            drawText(window, font, "H",  {xH,   y}, 11, {100, 110, 106});
+            drawText(window, font, "HR", {xHR,  y}, 11, {100, 110, 106});
+            drawText(window, font, "RBI",{xRBI, y}, 11, {100, 110, 106});
+            drawText(window, font, "OPS",   {xOPS, y}, 11, {100, 110, 106});
+            y += 14.0f;
+            for (const auto& p : stats) {
+                const sf::Color rowCol = (p.hits > 0 || p.walks > 0 || p.hitByPitch > 0)
+                    ? Ink : sf::Color{120, 128, 124};
+                drawText(window, font, fitLine(p.name, 12), {xLabel, y}, 12, rowCol);
+                drawText(window, font, std::to_string(p.atBats), {xAB,  y}, 12, rowCol);
+                drawText(window, font, std::to_string(p.hits),   {xH,   y}, 12, rowCol);
+                drawText(window, font, std::to_string(p.homeRuns),{xHR, y}, 12, rowCol);
+                drawText(window, font, std::to_string(p.rbi),    {xRBI, y}, 12, rowCol);
+                std::ostringstream ops;
+                ops << std::fixed << std::setprecision(3) << calcOPS(p);
+                // BABIP in tooltip: append to OPS if room
+                const double babip = calcBABIP(p);
+                if (babip > 0.0) {
+                    std::ostringstream bab;
+                    bab << std::fixed << std::setprecision(3) << babip;
+                    ops << "/" << bab.str();
+                }
+                drawText(window, font, fitLine(ops.str(), 10), {xOPS, y}, 12, rowCol);
+                y += 13.0f;
+            }
+            y += 4.0f;
+        };
+
+        drawBattingSection(awayStats, engine.awayTeamName() + " BATTING");
+        drawBattingSection(homeStats, engine.homeTeamName() + " BATTING");
+
+        // ── 守備成績 ────────────────────────────────────────────────────
+        const float xPos  = 960.0f;
+        const float xName = 984.0f;
+        const float xPO   = 1118.0f;
+        const float xA    = 1153.0f;
+        const float xE    = 1186.0f;
+
+        auto drawDefenseSection = [&](const std::vector<joji::PlayerBoxScore>& stats,
+                                      const std::string& teamName) {
+            if (y > 720.0f) return; // skip if no room
+            drawText(window, font, fitLine(teamName, 16), {xPos, y}, 13,
+                     {100, 110, 106}, sf::Text::Bold);
+            drawText(window, font, "PO", {xPO, y}, 11, {100, 110, 106});
+            drawText(window, font, "A",  {xA,  y}, 11, {100, 110, 106});
+            drawText(window, font, "E",  {xE,  y}, 11, {100, 110, 106});
+            y += 14.0f;
+            for (const auto& p : stats) {
+                const sf::Color rowCol = (p.errors > 0)
+                    ? sf::Color{220, 72, 66} : sf::Color{82, 93, 88};
+                std::string posLabel = positionAbbr(p.position);
+                drawText(window, font, posLabel,               {xPos,  y}, 11, {100, 110, 106});
+                drawText(window, font, fitLine(p.name, 10),   {xName, y}, 11, rowCol);
+                drawText(window, font, std::to_string(p.putouts), {xPO, y}, 11, rowCol);
+                drawText(window, font, std::to_string(p.assists), {xA,  y}, 11, rowCol);
+                drawText(window, font, std::to_string(p.errors),  {xE,  y}, 11, rowCol);
+                y += 12.0f;
+            }
+            y += 4.0f;
+        };
+
+        drawDefenseSection(homeStats, engine.homeTeamName() + " DEFENSE");
+        drawDefenseSection(awayStats, engine.awayTeamName() + " DEFENSE");
     }
 }
 
 void drawAtBatFlow(sf::RenderWindow& window, const sf::Font& font,
-                   const std::vector<joji::PitchLog>& logs) {
-    drawText(window, font, "At-bat flow", {960.0f, 716.0f}, 16, {82, 93, 88}, sf::Text::Bold);
+	                   const std::vector<joji::PitchLog>& logs) {
+    drawText(window, font, "At-bat flow", {960.0f, 696.0f}, 14, {82, 93, 88}, sf::Text::Bold);
 
     const std::size_t start = logs.size() > 1 ? logs.size() - 1 : 0;
-    float y = 740.0f;
+    float y = 714.0f;
 
     for (std::size_t i = start; i < logs.size(); ++i) {
         const auto& log = logs[i];
@@ -785,6 +1452,129 @@ void drawAtBatFlow(sf::RenderWindow& window, const sf::Font& font,
         flowLine << " -> " << joji::toString(log.pitchOutcome);
         drawText(window, font, fitLine(flowLine.str(), 39), {970.0f, y}, 13, {47, 58, 54});
         y += 24.0f;
+    }
+}
+
+std::string replayEventTypeLabel(joji::ReplayEventType type) {
+    switch (type) {
+        case joji::ReplayEventType::Pitch:      return "Pitch";
+        case joji::ReplayEventType::Contact:    return "Contact";
+        case joji::ReplayEventType::BallFlight: return "Ball";
+        case joji::ReplayEventType::Field:      return "Field";
+        case joji::ReplayEventType::Throw:      return "Throw";
+        case joji::ReplayEventType::Runner:     return "Runner";
+        case joji::ReplayEventType::Tag:        return "Tag";
+        case joji::ReplayEventType::Result:     return "Result";
+    }
+    return "Replay";
+}
+
+std::string replayPhaseLabel(joji::ReplayPhase phase) {
+    switch (phase) {
+        case joji::ReplayPhase::Pitch:      return "Pitch";
+        case joji::ReplayPhase::Contact:    return "Contact";
+        case joji::ReplayPhase::BallFlight: return "Ball flight";
+        case joji::ReplayPhase::Field:      return "Field";
+        case joji::ReplayPhase::Throw:      return "Throw";
+        case joji::ReplayPhase::Runner:     return "Runner";
+        case joji::ReplayPhase::Tag:        return "Tag";
+        case joji::ReplayPhase::Result:     return "Result";
+    }
+    return "Result";
+}
+
+sf::Color replayPhaseColor(joji::ReplayPhase phase) {
+    switch (phase) {
+        case joji::ReplayPhase::Pitch:      return {54, 151, 230};
+        case joji::ReplayPhase::Contact:    return {153, 116, 228};
+        case joji::ReplayPhase::BallFlight: return {80, 190, 100};
+        case joji::ReplayPhase::Field:      return {235, 178, 86};
+        case joji::ReplayPhase::Throw:      return {235, 116, 48};
+        case joji::ReplayPhase::Runner:     return {80, 190, 100};
+        case joji::ReplayPhase::Tag:        return {220, 72, 66};
+        case joji::ReplayPhase::Result:     return {82, 93, 88};
+    }
+    return Ink;
+}
+
+void drawReplayTimelineStatus(sf::RenderWindow& window,
+                              const sf::Font& font,
+                              const std::optional<joji::AnimationPlan>& plan,
+                              float elapsed,
+                              bool paused) {
+    if (!plan.has_value() || plan->replayTimeline.events.empty()) {
+        return;
+    }
+
+    const float duration = static_cast<float>(
+        std::max(plan->replayTimeline.durationSeconds, plan->totalDurationSeconds));
+    const float progress = duration > 0.0f
+        ? std::clamp(elapsed / duration, 0.0f, 1.0f)
+        : 0.0f;
+    const sf::Color barBack{205, 199, 184};
+    const sf::Color barFill = paused ? sf::Color{235, 116, 48} : sf::Color{54, 151, 230};
+
+    sf::RectangleShape scrubBack({260.0f, 4.0f});
+    scrubBack.setPosition({960.0f, 644.0f});
+    scrubBack.setFillColor(barBack);
+    window.draw(scrubBack);
+
+    sf::RectangleShape scrubFill({260.0f * progress, 4.0f});
+    scrubFill.setPosition({960.0f, 644.0f});
+    scrubFill.setFillColor(barFill);
+    window.draw(scrubFill);
+
+    sf::CircleShape knob(5.0f);
+    knob.setOrigin({5.0f, 5.0f});
+    knob.setPosition({960.0f + 260.0f * progress, 646.0f});
+    knob.setFillColor(barFill);
+    window.draw(knob);
+
+    std::ostringstream timeText;
+    timeText << (paused ? "PAUSED " : "PLAY ")
+             << std::fixed << std::setprecision(1)
+             << std::clamp(elapsed, 0.0f, std::max(duration, elapsed))
+             << "/" << std::max(0.0f, duration) << "s";
+    drawText(window,
+             font,
+             timeText.str(),
+             {960.0f, 628.0f},
+             11,
+             paused ? sf::Color{235, 116, 48} : sf::Color{82, 93, 88},
+             sf::Text::Bold);
+
+    const joji::ReplayCursor cursor = joji::cursorForReplayTimeline(plan->replayTimeline,
+                                                                     elapsed);
+    if (!cursor.activeEventIndex.has_value()
+        && !cursor.nextEventIndex.has_value()) {
+        return;
+    }
+    const joji::ReplayEvent* active = cursor.activeEventIndex.has_value()
+        ? &plan->replayTimeline.events[*cursor.activeEventIndex]
+        : &plan->replayTimeline.events[*cursor.nextEventIndex];
+    const joji::ReplayEvent* next = cursor.nextEventIndex.has_value()
+        ? &plan->replayTimeline.events[*cursor.nextEventIndex]
+        : nullptr;
+    const sf::Color phaseColor = replayPhaseColor(cursor.phase);
+
+    drawText(window, font, "Replay", {960.0f, 656.0f}, 13, {82, 93, 88}, sf::Text::Bold);
+    drawText(window, font, replayPhaseLabel(cursor.phase), {1028.0f, 656.0f}, 13, phaseColor, sf::Text::Bold);
+
+    std::ostringstream line;
+    line << std::fixed << std::setprecision(2) << active->timeSeconds
+         << "  " << replayEventTypeLabel(active->type)
+         << "  " << active->label;
+    if (!active->actor.empty()) {
+        line << "  " << active->actor;
+    }
+    drawText(window, font, fitLine(line.str(), 39), {960.0f, 671.0f}, 11, Ink);
+
+    if (next != nullptr) {
+        std::ostringstream nextLine;
+        nextLine << "next " << std::fixed << std::setprecision(2) << next->timeSeconds
+                 << "  " << replayEventTypeLabel(next->type)
+                 << "  " << next->label;
+        drawText(window, font, fitLine(nextLine.str(), 39), {960.0f, 684.0f}, 10, {100, 110, 106});
     }
 }
 
@@ -963,11 +1753,11 @@ void drawPitchView(sf::RenderWindow& window,
                    const std::optional<joji::AnimationPlan>& plan,
                    const std::vector<joji::PitchLog>& logs,
                    float elapsed) {
-    const sf::Vector2f zoneOrigin{1030.0f, 560.0f};
-    const sf::Vector2f zoneSize{150.0f, 135.0f};
-    const sf::Vector2f pitcherPoint{1105.0f, 462.0f};
+    const sf::Vector2f zoneOrigin{1030.0f, 510.0f};
+    const sf::Vector2f zoneSize{148.0f, 128.0f};
+    const sf::Vector2f pitcherPoint{1105.0f, 414.0f};
 
-    drawText(window, font, "Pitch View", {960.0f, 432.0f}, 18, {82, 93, 88}, sf::Text::Bold);
+    drawText(window, font, "Pitch View", {960.0f, 386.0f}, 15, {82, 93, 88}, sf::Text::Bold);
 
     sf::CircleShape pitcher(8.0f);
     pitcher.setOrigin({8.0f, 8.0f});
@@ -976,7 +1766,7 @@ void drawPitchView(sf::RenderWindow& window,
     pitcher.setOutlineColor(sf::Color::White);
     pitcher.setOutlineThickness(1.5f);
     window.draw(pitcher);
-    drawText(window, font, "Pitcher", {1078.0f, 442.0f}, 11, {82, 93, 88});
+    drawText(window, font, "Pitcher", {1078.0f, 394.0f}, 11, {82, 93, 88});
 
     sf::RectangleShape moundLine({54.0f, 3.0f});
     moundLine.setOrigin({27.0f, 1.5f});
@@ -985,7 +1775,7 @@ void drawPitchView(sf::RenderWindow& window,
     window.draw(moundLine);
 
     drawZoneGrid(window, font, zoneOrigin, zoneSize);
-    drawText(window, font, "Batter", {1084.0f, 698.0f}, 11, {82, 93, 88});
+    drawText(window, font, "Batter", {1084.0f, 641.0f}, 11, {82, 93, 88});
 
     if (!logs.empty()) {
         drawPitchLocationHistory(window, logs, zoneOrigin, zoneSize);
@@ -999,12 +1789,12 @@ void drawPitchView(sf::RenderWindow& window,
         label << pitch.pitchType << " "
               << static_cast<int>(std::round(pitch.velocity))
               << "  Z" << pitch.zoneNumber;
-        drawText(window, font, fitLine(label.str(), 25), {960.0f, 462.0f}, 13, Ink, sf::Text::Bold);
+        drawText(window, font, fitLine(label.str(), 25), {960.0f, 404.0f}, 13, Ink, sf::Text::Bold);
 
         const std::string result = pitch.isBall ? "Ball"
                                 : pitch.isInPlay ? "In Play"
                                                  : "Strike";
-        drawText(window, font, result, {960.0f, 482.0f}, 13, pitchAnimationColor(pitch), sf::Text::Bold);
+        drawText(window, font, result, {960.0f, 420.0f}, 13, pitchAnimationColor(pitch), sf::Text::Bold);
     }
 }
 
@@ -1565,12 +2355,12 @@ void drawPitchViewMode(sf::RenderWindow& window,
 }
 
 void drawLog(sf::RenderWindow& window, const sf::Font& font, const std::vector<joji::GameLog>& logs) {
-    drawText(window, font, "Play log", {960.0f, 782.0f}, 15, {82, 93, 88}, sf::Text::Bold);
+    drawText(window, font, "Play log", {960.0f, 773.0f}, 13, {82, 93, 88}, sf::Text::Bold);
     const std::size_t start = logs.size() > 1 ? logs.size() - 1 : 0;
-    float y = 802.0f;
+    float y = 790.0f;
     for (std::size_t i = start; i < logs.size(); ++i) {
-        drawText(window, font, fitLine(logs[i].text, 42), {960.0f, y}, 14, Ink);
-        y += 26.0f;
+        drawText(window, font, fitLine(logs[i].text, 42), {960.0f, y}, 13, Ink);
+        y += 22.0f;
     }
 }
 
@@ -1655,6 +2445,238 @@ void drawBaseRunningEvents(sf::RenderWindow& window,
     }
 }
 
+// ── チーム選択画面 ─────────────────────────────────────────────────────────
+
+void drawTeamSelectScreen(sf::RenderWindow& window,
+                          const sf::Font& font,
+                          const std::vector<joji::Team>& teams,
+                          int awayIdx, int homeIdx,
+                          int activeCol,   // 0=away, 1=home
+                          int seriesLen) {
+    window.clear({14, 22, 18});
+
+    // タイトル
+    sf::Text title(font, "JOJI  BASEBALL  ENGINE", 38);
+    title.setStyle(sf::Text::Bold);
+    title.setFillColor({200, 185, 80});
+    {
+        const sf::FloatRect b = title.getLocalBounds();
+        title.setOrigin({b.position.x + b.size.x / 2.0f, b.position.y + b.size.y / 2.0f});
+        title.setPosition({640.0f, 68.0f});
+    }
+    window.draw(title);
+
+    drawText(window, font, "SELECT TEAMS", {640.0f - 80.0f, 114.0f}, 16, {90, 100, 96}, sf::Text::Bold);
+
+    // カラム見出し
+    const float colX[2] = {260.0f, 740.0f};
+    const sf::Color colLabel[2] = {
+        activeCol == 0 ? sf::Color{243, 185, 54} : sf::Color{130, 140, 136},
+        activeCol == 1 ? sf::Color{243, 185, 54} : sf::Color{130, 140, 136}
+    };
+    drawText(window, font, "AWAY", {colX[0] - 30.0f, 148.0f}, 18, colLabel[0], sf::Text::Bold);
+    drawText(window, font, "HOME", {colX[1] - 30.0f, 148.0f}, 18, colLabel[1], sf::Text::Bold);
+
+    // 左右列のアクティブ下線
+    for (int c = 0; c < 2; ++c) {
+        sf::RectangleShape line({200.0f, 3.0f});
+        line.setPosition({colX[c] - 100.0f, 172.0f});
+        line.setFillColor(activeCol == c ? sf::Color{243, 185, 54, 200} : sf::Color{60, 70, 66, 120});
+        window.draw(line);
+    }
+
+    const int n = static_cast<int>(teams.size());
+    for (int i = 0; i < n; ++i) {
+        const float y = 194.0f + i * 58.0f;
+        const std::string& name = teams[static_cast<std::size_t>(i)].name();
+
+        for (int c = 0; c < 2; ++c) {
+            const bool selected = (c == 0) ? (i == awayIdx) : (i == homeIdx);
+            const bool active   = (c == activeCol);
+            const bool sameAsOther = (c == 0) ? (i == homeIdx) : (i == awayIdx);
+
+            sf::Color bg{0, 0, 0, 0};
+            sf::Color nameCol{100, 108, 104};
+
+            if (selected) {
+                bg = active ? sf::Color{40, 56, 44, 230} : sf::Color{28, 38, 32, 180};
+                nameCol = active ? sf::Color{243, 185, 54} : sf::Color{200, 195, 170};
+
+                sf::RectangleShape box({320.0f, 46.0f});
+                box.setPosition({colX[c] - 160.0f, y - 4.0f});
+                box.setFillColor(bg);
+                box.setOutlineColor(active ? sf::Color{200, 165, 50, 200} : sf::Color{80, 90, 86, 130});
+                box.setOutlineThickness(active ? 2.0f : 1.0f);
+                window.draw(box);
+            } else if (sameAsOther) {
+                nameCol = {55, 62, 58};  // 対戦相手と同じチームは暗く
+            }
+
+            const std::string label = (selected && active ? "> " : "  ") + name;
+            drawText(window, font, label, {colX[c] - 148.0f, y + 4.0f},
+                     selected ? 19 : 16, nameCol,
+                     selected ? sf::Text::Bold : sf::Text::Regular);
+
+            if (selected) {
+                // チーム略称バッジ
+                const std::string abbr = name.size() >= 3 ? name.substr(0, 3) : name;
+                drawText(window, font, abbr, {colX[c] + 110.0f, y + 6.0f}, 13,
+                         active ? sf::Color{180, 140, 40} : sf::Color{90, 98, 94});
+            }
+        }
+    }
+
+    // シリーズ戦数セレクタ
+    const float serY = 194.0f + n * 58.0f + 20.0f;
+    drawText(window, font, "Series length:", {430.0f, serY}, 16, {100, 110, 106}, sf::Text::Bold);
+    for (int len : {3, 5, 7}) {
+        const float bx = 594.0f + (len - 3) * 44.0f;
+        const bool sel = (len == seriesLen);
+        sf::RectangleShape btn({36.0f, 28.0f});
+        btn.setPosition({bx, serY - 2.0f});
+        btn.setFillColor(sel ? sf::Color{40, 56, 44, 200} : sf::Color{20, 28, 24, 100});
+        btn.setOutlineColor(sel ? sf::Color{200, 165, 50, 200} : sf::Color{60, 68, 64, 140});
+        btn.setOutlineThickness(sel ? 2.0f : 1.0f);
+        window.draw(btn);
+        drawText(window, font, std::to_string(len), {bx + 12.0f, serY + 2.0f}, 16,
+                 sel ? sf::Color{243, 185, 54} : sf::Color{110, 120, 116},
+                 sel ? sf::Text::Bold : sf::Text::Regular);
+    }
+
+    // 操作ヒント
+    drawText(window, font,
+             "Up/Down: select  Left/Right: switch column  3/5/7: series  Space: start",
+             {640.0f - 288.0f, 790.0f}, 14, {80, 90, 86});
+}
+
+// ── シリーズ中間オーバーレイ ──────────────────────────────────────────────
+
+void drawSeriesOverlay(sf::RenderWindow& window,
+                       const sf::Font& font,
+                       const std::string& awayName,
+                       const std::string& homeName,
+                       const std::vector<std::pair<int,int>>& scores,
+                       int awayWins, int homeWins,
+                       int seriesLen, bool seriesOver) {
+    // 半透明背景
+    sf::RectangleShape bg({900.0f, 500.0f});
+    bg.setPosition({190.0f, 160.0f});
+    bg.setFillColor({12, 18, 14, 235});
+    bg.setOutlineColor({80, 160, 100, 180});
+    bg.setOutlineThickness(2.0f);
+    window.draw(bg);
+
+    const std::string awayAbbr = awayName.size() >= 3 ? awayName.substr(0, 3) : awayName;
+    const std::string homeAbbr = homeName.size() >= 3 ? homeName.substr(0, 3) : homeName;
+    const int needed = seriesLen / 2 + 1;
+
+    // タイトル
+    const std::string title = seriesOver
+        ? (awayWins >= needed ? awayName : homeName) + "  wins the series!"
+        : "Series  " + awayAbbr + " " + std::to_string(awayWins) + " - " + std::to_string(homeWins) + " " + homeAbbr;
+    drawText(window, font, title, {640.0f - 200.0f, 188.0f}, 24,
+             seriesOver ? sf::Color{243, 185, 54} : sf::Color{220, 215, 200}, sf::Text::Bold);
+
+    // ゲームごとのスコア
+    const float gx = 250.0f;
+    float gy = 238.0f;
+    drawText(window, font, "Game", {gx, gy}, 13, {100, 108, 104});
+    drawText(window, font, awayAbbr, {gx + 100.0f, gy}, 13, {100, 108, 104});
+    drawText(window, font, homeAbbr, {gx + 170.0f, gy}, 13, {100, 108, 104});
+    drawText(window, font, "Winner", {gx + 240.0f, gy}, 13, {100, 108, 104});
+    gy += 22.0f;
+
+    for (std::size_t i = 0; i < scores.size(); ++i) {
+        const auto [as, hs] = scores[i];
+        const bool awayWon = as > hs;
+        const sf::Color rowCol = awayWon ? sf::Color{200, 210, 255} : sf::Color{255, 200, 200};
+        drawText(window, font, "Game " + std::to_string(i + 1), {gx, gy}, 14, {180, 188, 184});
+        drawText(window, font, std::to_string(as), {gx + 100.0f, gy}, 15,
+                 awayWon ? sf::Color{243, 185, 54} : sf::Color{140, 148, 144}, sf::Text::Bold);
+        drawText(window, font, std::to_string(hs), {gx + 170.0f, gy}, 15,
+                 !awayWon ? sf::Color{243, 185, 54} : sf::Color{140, 148, 144}, sf::Text::Bold);
+        drawText(window, font, awayWon ? awayAbbr : homeAbbr, {gx + 240.0f, gy}, 14, rowCol);
+        gy += 26.0f;
+    }
+
+    // シリーズ勝敗バー
+    gy += 12.0f;
+    const float barTotalW = 400.0f;
+    const float awayBarW = seriesLen > 0 ? barTotalW * awayWins / needed : 0.0f;
+    const float homeBarW = seriesLen > 0 ? barTotalW * homeWins / needed : 0.0f;
+
+    drawText(window, font, awayAbbr + " wins", {gx, gy}, 14, {160, 170, 200});
+    sf::RectangleShape awayBar({std::min(awayBarW, barTotalW), 14.0f});
+    awayBar.setPosition({gx + 100.0f, gy + 2.0f});
+    awayBar.setFillColor({80, 120, 200, 200});
+    window.draw(awayBar);
+    drawText(window, font, std::to_string(awayWins) + "/" + std::to_string(needed),
+             {gx + 510.0f, gy}, 13, {130, 140, 160});
+    gy += 24.0f;
+
+    drawText(window, font, homeAbbr + " wins", {gx, gy}, 14, {200, 150, 150});
+    sf::RectangleShape homeBar({std::min(homeBarW, barTotalW), 14.0f});
+    homeBar.setPosition({gx + 100.0f, gy + 2.0f});
+    homeBar.setFillColor({200, 80, 80, 200});
+    window.draw(homeBar);
+    drawText(window, font, std::to_string(homeWins) + "/" + std::to_string(needed),
+             {gx + 510.0f, gy}, 13, {160, 120, 120});
+
+    // ヒント
+    const std::string hint = seriesOver
+        ? "Space: new series  T: team select"
+        : "Space: next game  T: team select";
+    drawText(window, font, hint, {640.0f - 160.0f, 610.0f}, 17, {100, 180, 120}, sf::Text::Bold);
+}
+
+// ── プレー結果バナー (打席結果後1.4秒) ───────────────────────────────────
+
+void drawPlayResultBanner(sf::RenderWindow& window,
+                          const sf::Font& font,
+                          const std::string& playText,
+                          const std::string& batterName,
+                          sf::Color color,
+                          float elapsed) {
+    constexpr float kFadeIn  = 0.12f;
+    constexpr float kHold    = 0.85f;
+    constexpr float kFadeOut = 0.43f;
+    constexpr float kTotal   = kFadeIn + kHold + kFadeOut;
+    if (elapsed > kTotal) return;
+
+    float alpha;
+    if (elapsed < kFadeIn)       alpha = elapsed / kFadeIn;
+    else if (elapsed < kFadeIn + kHold) alpha = 1.0f;
+    else alpha = 1.0f - (elapsed - kFadeIn - kHold) / kFadeOut;
+    alpha = std::clamp(alpha, 0.0f, 1.0f);
+
+    const auto a = [&](sf::Color c) -> sf::Color {
+        c.a = static_cast<std::uint8_t>(c.a * alpha);
+        return c;
+    };
+
+    // 背景帯
+    sf::RectangleShape bg({580.0f, 82.0f});
+    bg.setPosition({170.0f, 325.0f});
+    bg.setFillColor(a({12, 18, 14, 210}));
+    bg.setOutlineColor(a({color.r, color.g, color.b, 180}));
+    bg.setOutlineThickness(3.0f);
+    window.draw(bg);
+
+    // プレー名
+    sf::Text txt(font, playText, 42);
+    txt.setStyle(sf::Text::Bold);
+    txt.setFillColor(a(color));
+    {
+        const sf::FloatRect b = txt.getLocalBounds();
+        txt.setOrigin({b.position.x + b.size.x / 2.0f, b.position.y + b.size.y / 2.0f});
+        txt.setPosition({460.0f, 348.0f});
+    }
+    window.draw(txt);
+
+    // 打者名
+    drawText(window, font, batterName, {460.0f - 80.0f, 376.0f}, 16, a({200, 205, 202}));
+}
+
 } // namespace
 
 // ピッチログ: 打席中なら現在打席、それ以外なら最後の打席
@@ -1675,51 +2697,168 @@ int main() {
         return 1;
     }
 
-    auto makeEngine = [] {
-        const auto teams = joji::allTeams();
+    // ── チーム / シリーズ状態 ──────────────────────────────────────────────
+    const auto teams = joji::allTeams();
+    const int numTeams = static_cast<int>(teams.size());
+
+    int awayIdx      = 0;
+    int homeIdx      = 1;
+    int selectCol    = 0;   // 0=away, 1=home
+    int seriesLen    = 3;
+    bool inTeamSelect    = true;
+    bool showSeriesSummary = false;
+
+    std::vector<std::pair<int,int>> seriesScores;  // {away, home} per game
+    int awaySeriesWins = 0;
+    int homeSeriesWins = 0;
+    bool seriesOver = false;
+
+    // シリーズリセットヘルパー
+    auto resetSeries = [&]() {
+        seriesScores.clear();
+        awaySeriesWins = homeSeriesWins = 0;
+        seriesOver = false;
+        showSeriesSummary = false;
+    };
+
+    // ── エンジン (チーム確定後に初期化) ───────────────────────────────────
+    auto makeEngine = [&]() {
         return joji::GameEngine{
-            teams.at(0),
-            teams.at(1),
+            teams.at(static_cast<std::size_t>(awayIdx)),
+            teams.at(static_cast<std::size_t>(homeIdx)),
             joji::Random{std::optional<std::uint32_t>{}}
         };
     };
 
+    // プレースホルダー (チーム選択前は teams[0] vs teams[1] で初期化)
     joji::GameEngine engine = makeEngine();
     std::optional<joji::PlayResult> currentPlay;
 
-    sf::RenderWindow window(sf::VideoMode({static_cast<unsigned int>(WindowWidth), static_cast<unsigned int>(WindowHeight)}),
+    sf::RenderWindow window(sf::VideoMode({static_cast<unsigned int>(WindowWidth),
+                                           static_cast<unsigned int>(WindowHeight)}),
                             "Joji Baseball Engine v1.0");
     window.setVerticalSyncEnabled(true);
 
     sf::Clock playClock;
+    float replaySeekSeconds = 0.0f;
+    bool replayPaused = false;
     bool autoPlay = false;
     VisualMode visualMode = VisualMode::Field;
 
-    // 投手交代バナー管理
+    // ビュー切り替えフェード
+    enum class ViewTransition { None, FadingOut, FadingIn };
+    ViewTransition viewTransition = ViewTransition::None;
+    VisualMode     targetMode     = VisualMode::Field;
+    sf::Clock      transitionClock;
+    constexpr float TransitionHalf = 0.18f; // 片道フェード秒数
+
+    // 投手交代バナー
     std::optional<joji::GameEngine::PitcherChangeEvent> bannerEvent;
     sf::Clock bannerClock;
 
-    // 1球進める or 打席結果を反映
+    // プレー結果バナー
+    std::string playBannerText;
+    std::string playBannerSub;
+    sf::Color   playBannerColor{sf::Color::White};
+    sf::Clock   playBannerClock;
+    bool        playBannerActive = false;
+
+    // ゲーム状態リセットヘルパー
+    auto resetGame = [&]() {
+        engine = makeEngine();
+        currentPlay.reset();
+        bannerEvent.reset();
+        replaySeekSeconds = 0.0f;
+        replayPaused = false;
+        autoPlay = false;
+        playBannerActive = false;
+        visualMode = VisualMode::Field;
+        playClock.restart();
+    };
+
+    // ── 1球進める ──────────────────────────────────────────────────────────
     auto advancePitch = [&]() {
         if (engine.isComplete()) return;
 
         if (engine.hasPendingAtBatResult()) {
-            // 打席終了済み: ゲーム状態に反映
             auto result = engine.applyPendingAtBatResult();
             if (result.has_value()) {
                 currentPlay = result;
+                // プレー結果バナー起動
+                playBannerText  = joji::toString(result->type);
+                playBannerSub   = result->batterName;
+                playBannerColor = outcomeColor(result->type);
+                playBannerClock.restart();
+                playBannerActive = true;
             }
         } else {
-            // 1球投げる
             engine.simulateNextPitch();
-            // pendingになっていなければ軌跡表示をリセット
             if (!engine.hasPendingAtBatResult()) {
                 currentPlay.reset();
             }
         }
+        replaySeekSeconds = 0.0f;
+        replayPaused = false;
         playClock.restart();
     };
 
+    auto replayDuration = [&]() {
+        if (!engine.latestAnimationPlan().has_value()) return 0.0f;
+        const auto& plan = *engine.latestAnimationPlan();
+        return static_cast<float>(
+            std::max(plan.totalDurationSeconds, plan.replayTimeline.durationSeconds));
+    };
+
+    auto replayElapsed = [&]() {
+        return replayPaused
+            ? replaySeekSeconds
+            : replaySeekSeconds + playClock.getElapsedTime().asSeconds();
+    };
+
+    auto toggleReplayPause = [&]() {
+        if (!engine.latestAnimationPlan().has_value()) return;
+        if (replayPaused) {
+            replayPaused = false;
+            playClock.restart();
+        } else {
+            const float duration = replayDuration();
+            replaySeekSeconds = duration > 0.0f
+                ? std::clamp(replayElapsed(), 0.0f, duration + 0.6f)
+                : std::max(0.0f, replayElapsed());
+            replayPaused = true;
+            autoPlay = false;
+        }
+    };
+
+    auto seekReplay = [&](float delta) {
+        if (!engine.latestAnimationPlan().has_value()) return;
+        const float duration = replayDuration();
+        const float limit = duration > 0.0f ? duration + 0.6f : 0.0f;
+        replaySeekSeconds = std::clamp(replayElapsed() + delta, 0.0f, limit);
+        replayPaused = true;
+        autoPlay = false;
+        playClock.restart();
+    };
+
+    // シリーズ試合終了処理
+    auto finalizeGame = [&]() {
+        if (!engine.isComplete()) return;
+        const int as = engine.state().awayScore;
+        const int hs = engine.state().homeScore;
+        if (as == hs) return;  // タイは記録しない
+        seriesScores.push_back({as, hs});
+        if (as > hs) awaySeriesWins++;
+        else         homeSeriesWins++;
+        const int needed = seriesLen / 2 + 1;
+        if (awaySeriesWins >= needed || homeSeriesWins >= needed
+            || static_cast<int>(seriesScores.size()) >= seriesLen) {
+            seriesOver = true;
+        }
+        showSeriesSummary = true;
+        autoPlay = false;
+    };
+
+    // ── イベントループ ─────────────────────────────────────────────────────
     while (window.isOpen()) {
         while (const std::optional event = window.pollEvent()) {
             if (event->is<sf::Event::Closed>()) {
@@ -1727,27 +2866,106 @@ int main() {
             }
 
             if (const auto* key = event->getIf<sf::Event::KeyPressed>()) {
-                if (key->code == sf::Keyboard::Key::Space) {
-                    advancePitch();
-                    autoPlay = false;
-                } else if (key->code == sf::Keyboard::Key::A) {
-                    autoPlay = !autoPlay;
-                } else if (key->code == sf::Keyboard::Key::R) {
-                    engine = makeEngine();
-                    currentPlay.reset();
-                    bannerEvent.reset();
-                    playClock.restart();
-                    autoPlay = false;
-                } else if (key->code == sf::Keyboard::Key::P) {
-                    visualMode = visualMode == VisualMode::Field ? VisualMode::Pitch : VisualMode::Field;
+
+                // ── チーム選択画面 ──────────────────────────────────────
+                if (inTeamSelect) {
+                    if (key->code == sf::Keyboard::Key::Up) {
+                        if (selectCol == 0) { awayIdx = (awayIdx - 1 + numTeams) % numTeams; }
+                        else                { homeIdx = (homeIdx - 1 + numTeams) % numTeams; }
+                        // 同じチームをスキップ
+                        if (awayIdx == homeIdx) {
+                            if (selectCol == 0) awayIdx = (awayIdx - 1 + numTeams) % numTeams;
+                            else                homeIdx = (homeIdx - 1 + numTeams) % numTeams;
+                        }
+                    } else if (key->code == sf::Keyboard::Key::Down) {
+                        if (selectCol == 0) { awayIdx = (awayIdx + 1) % numTeams; }
+                        else                { homeIdx = (homeIdx + 1) % numTeams; }
+                        if (awayIdx == homeIdx) {
+                            if (selectCol == 0) awayIdx = (awayIdx + 1) % numTeams;
+                            else                homeIdx = (homeIdx + 1) % numTeams;
+                        }
+                    } else if (key->code == sf::Keyboard::Key::Left
+                            || key->code == sf::Keyboard::Key::Right) {
+                        selectCol = 1 - selectCol;
+                    } else if (key->code == sf::Keyboard::Key::Num3) {
+                        seriesLen = 3;
+                    } else if (key->code == sf::Keyboard::Key::Num5) {
+                        seriesLen = 5;
+                    } else if (key->code == sf::Keyboard::Key::Num7) {
+                        seriesLen = 7;
+                    } else if (key->code == sf::Keyboard::Key::Space
+                            || key->code == sf::Keyboard::Key::Enter) {
+                        inTeamSelect = false;
+                        resetSeries();
+                        resetGame();
+                    }
+
+                // ── シリーズサマリー画面 ────────────────────────────────
+                } else if (showSeriesSummary) {
+                    if (key->code == sf::Keyboard::Key::Space
+                     || key->code == sf::Keyboard::Key::Enter) {
+                        if (seriesOver) {
+                            // シリーズ終了 → チーム選択へ
+                            inTeamSelect = true;
+                            showSeriesSummary = false;
+                        } else {
+                            // 次の試合へ
+                            showSeriesSummary = false;
+                            resetGame();
+                        }
+                    } else if (key->code == sf::Keyboard::Key::T) {
+                        inTeamSelect = true;
+                        showSeriesSummary = false;
+                        resetSeries();
+                    }
+
+                // ── プレイ中 ───────────────────────────────────────────
+                } else {
+                    if (key->code == sf::Keyboard::Key::Space) {
+                        if (engine.isComplete() && !showSeriesSummary) {
+                            finalizeGame();
+                        } else {
+                            advancePitch();
+                            autoPlay = false;
+                        }
+                    } else if (key->code == sf::Keyboard::Key::A) {
+                        autoPlay = !autoPlay;
+                        if (autoPlay) { replayPaused = false; playClock.restart(); }
+                    } else if (key->code == sf::Keyboard::Key::R) {
+                        resetGame();
+                    } else if (key->code == sf::Keyboard::Key::T) {
+                        inTeamSelect = true;
+                        showSeriesSummary = false;
+                        resetSeries();
+                    } else if (key->code == sf::Keyboard::Key::P) {
+                        if (viewTransition == ViewTransition::None) {
+                            targetMode = (visualMode == VisualMode::Field)
+                                             ? VisualMode::Pitch : VisualMode::Field;
+                            viewTransition = ViewTransition::FadingOut;
+                            transitionClock.restart();
+                        }
+                    } else if (key->code == sf::Keyboard::Key::S) {
+                        toggleReplayPause();
+                    } else if (key->code == sf::Keyboard::Key::Left) {
+                        seekReplay(-0.25f);
+                    } else if (key->code == sf::Keyboard::Key::Right) {
+                        seekReplay(0.25f);
+                    }
                 }
             }
         }
 
-        const float elapsed = playClock.getElapsedTime().asSeconds();
+        // ── チーム選択画面描画 ─────────────────────────────────────────────
+        if (inTeamSelect) {
+            drawTeamSelectScreen(window, font, teams, awayIdx, homeIdx, selectCol, seriesLen);
+            window.display();
+            continue;
+        }
+
+        const float elapsed = replayElapsed();
         const bool complete = engine.isComplete();
 
-        // 新しい投手交代イベントを検出 → バナークロックリセット
+        // 投手交代バナー
         const auto& latestChange = engine.lastPitcherChange();
         if (latestChange.has_value()
             && (!bannerEvent.has_value() || bannerEvent->toName != latestChange->toName)) {
@@ -1757,32 +2975,42 @@ int main() {
         const float bannerAge = bannerClock.getElapsedTime().asSeconds();
         const bool showBanner = bannerEvent.has_value() && bannerAge < 3.5f;
 
-        // InPlay: Pitch View でアニメ終了 + 0.28s 後に自動で Field View へ遷移
+        // InPlay: Pitch View → Field View 自動遷移
         if (visualMode == VisualMode::Pitch
             && engine.hasPendingAtBatResult()
             && engine.latestAnimationPlan().has_value()
             && engine.latestAnimationPlan()->hasPitch
             && engine.latestAnimationPlan()->pitch.isInPlay
-            && !complete) {
+            && !replayPaused && !complete) {
             const float transitionAt = static_cast<float>(
                 engine.latestAnimationPlan()->pitch.durationSeconds) + 0.28f;
-            if (elapsed > transitionAt) {
+            if (elapsed > transitionAt && viewTransition == ViewTransition::None) {
                 auto result = engine.applyPendingAtBatResult();
-                if (result.has_value()) currentPlay = result;
+                if (result.has_value()) {
+                    currentPlay = result;
+                    playBannerText  = joji::toString(result->type);
+                    playBannerSub   = result->batterName;
+                    playBannerColor = outcomeColor(result->type);
+                    playBannerClock.restart();
+                    playBannerActive = true;
+                }
+                replaySeekSeconds = 0.0f;
+                replayPaused = false;
                 playClock.restart();
-                visualMode = VisualMode::Field;
+                // フェードで Field に遷移
+                targetMode     = VisualMode::Field;
+                viewTransition = ViewTransition::FadingOut;
+                transitionClock.restart();
             }
         }
 
-        // オートモード: pending は長め(1.8s)、通常投球は短め(0.9s) で自動進行
-        if (autoPlay && !complete) {
+        // オートモード
+        if (autoPlay && !replayPaused && !complete) {
             const float autoDelay = engine.hasPendingAtBatResult() ? 1.8f : 0.9f;
-            if (elapsed > autoDelay) {
-                advancePitch();
-            }
+            if (elapsed > autoDelay) advancePitch();
         }
 
-        // 軌跡は applyPendingAtBatResult 後のみ表示し、次球で消える
+        // ── 表示フラグ ──────────────────────────────────────────────────────
         const bool showTrajectory = currentPlay.has_value()
                                     && engine.latestAnimationPlan().has_value()
                                     && engine.latestAnimationPlan()->hasBattedBall
@@ -1801,21 +3029,20 @@ int main() {
                                && (engine.isAtBatInProgress() || engine.hasPendingAtBatResult())
                                && elapsed <= static_cast<float>(
                                    engine.latestAnimationPlan()->pitch.durationSeconds + 0.45);
-
-        // Inter-pitch runner animations (SB/CS/WP/PB/Balk): show while pitch is active
-        // OR right after CS-3rd-out (no pitch, but plan has runners).
         const bool hasInterPitchRunners = !engine.latestBaseRunningEvents().empty()
                                           && engine.latestAnimationPlan().has_value()
                                           && !engine.latestAnimationPlan()->runners.empty();
         const bool showInterPitchRunners = hasInterPitchRunners
-                                           && !showRunnerMovement   // don't double-draw with post-play
+                                           && !showRunnerMovement
                                            && elapsed <= static_cast<float>(
                                                engine.latestAnimationPlan()->totalDurationSeconds + 0.6);
 
+        // ── 描画 ────────────────────────────────────────────────────────────
         if (visualMode == VisualMode::Pitch) {
             drawPitchViewMode(window, font, engine, currentPlay, elapsed, autoPlay, complete);
         } else {
-            drawField(window);
+            drawField(window, engine.ballpark());
+
             if (showPitch) {
                 drawPitchAnimation(window, *engine.latestAnimationPlan(), elapsed);
             }
@@ -1826,51 +3053,117 @@ int main() {
                     : static_cast<float>(aplan.throws[0].startTimeOffset);
                 drawTrajectory(window, *currentPlay, aplan, elapsed, throwStart);
                 drawThrowAnimations(window, aplan, elapsed);
+                drawTagFeedback(window, font, aplan, elapsed);
             }
             drawDefense(window, font, engine.currentDefenseAlignment(),
                         showTrajectory ? currentPlay : std::optional<joji::PlayResult>{},
                         showTrajectory ? engine.latestAnimationPlan() : std::optional<joji::AnimationPlan>{},
                         showTrajectory ? elapsed : 0.0f);
-            const std::vector<std::string> hiddenRunnerNames = showRunnerMovement
-                ? animatedRunnerNames(*engine.latestAnimationPlan())
-                : (showInterPitchRunners
+
+            const std::vector<std::string> hiddenNames =
+                (showRunnerMovement || showInterPitchRunners)
                     ? animatedRunnerNames(*engine.latestAnimationPlan())
-                    : std::vector<std::string>{});
-            drawBases(window, engine.state(), hiddenRunnerNames);
-            if (showRunnerMovement) {
-                drawRunnerAnimations(window, font, *engine.latestAnimationPlan(), elapsed);
-            } else if (showInterPitchRunners) {
+                    : std::vector<std::string>{};
+            drawBases(window, engine.state(), hiddenNames);
+            if (showRunnerMovement || showInterPitchRunners) {
                 drawRunnerAnimations(window, font, *engine.latestAnimationPlan(), elapsed);
             }
 
-            // 投手交代バナー (フィールド左側オーバーレイ)
+            // プレー結果バナー
+            if (playBannerActive) {
+                const float bElapsed = playBannerClock.getElapsedTime().asSeconds();
+                drawPlayResultBanner(window, font, playBannerText, playBannerSub,
+                                     playBannerColor, bElapsed);
+                if (bElapsed > 1.4f) playBannerActive = false;
+            }
+
+            // 投手交代バナー
             if (showBanner) {
-                // 3.5 秒でフェードアウト (最後 0.5 秒)
                 const float alpha = bannerAge > 3.0f ? (3.5f - bannerAge) / 0.5f : 1.0f;
                 drawPitcherChangeBanner(window, font, *bannerEvent, alpha);
             }
+
             // 試合終了サマリー
-            if (complete) {
-                drawGameEndSummary(window, font, engine);
-            }
+            if (complete) drawGameEndSummary(window, font, engine);
+
+            // 打順ストリップ (試合中のみ)
+            if (!complete) drawBattingOrderStrip(window, font, engine);
 
             drawPanel(window);
-            drawScoreboard(window, font, engine.state(), showTrajectory ? currentPlay : std::optional<joji::PlayResult>{}, engine, complete);
+            drawLineScore(window, font, engine, complete);
+            drawScoreboard(window, font, engine.state(),
+                           showTrajectory ? currentPlay : std::optional<joji::PlayResult>{},
+                           engine, complete);
+
             if (hasInterPitchRunners) {
                 const float animEnd = engine.latestAnimationPlan().has_value()
                     ? static_cast<float>(engine.latestAnimationPlan()->totalDurationSeconds)
                     : 0.0f;
                 drawBaseRunningEvents(window, font, engine.latestBaseRunningEvents(), elapsed, animEnd);
             }
-            drawAtBatFlow(window, font, currentPitchLogs(engine));
-            drawPitchView(window, font, engine.latestAnimationPlan(), currentPitchLogs(engine), elapsed);
-            drawLog(window, font, engine.logs());
+            if (!complete) {
+                drawPitchView(window, font, engine.latestAnimationPlan(), currentPitchLogs(engine), elapsed);
+                drawReplayTimelineStatus(window, font, engine.latestAnimationPlan(), elapsed, replayPaused);
+                drawAtBatFlow(window, font, currentPitchLogs(engine));
+                drawLog(window, font, engine.logs());
+            } else {
+                drawLog(window, font, engine.logs());
+            }
 
-            const char* hint = complete
-                ? "P pitch view  R new game"
-                : (autoPlay ? "P pitch view  Space next  A auto:on  R new game"
-                            : "P pitch view  Space next  A auto  R new game");
-            drawText(window, font, hint, {34.0f, 790.0f}, 14, {238, 232, 216});
+            // シリーズ中間サマリーオーバーレイ
+            if (showSeriesSummary) {
+                drawSeriesOverlay(window, font,
+                                  teams[static_cast<std::size_t>(awayIdx)].name(),
+                                  teams[static_cast<std::size_t>(homeIdx)].name(),
+                                  seriesScores,
+                                  awaySeriesWins, homeSeriesWins,
+                                  seriesLen, seriesOver);
+            }
+
+            // 操作ヒント
+            const char* hint;
+            if (complete && !showSeriesSummary) {
+                const int needed = seriesLen / 2 + 1;
+                const bool decided = awaySeriesWins >= needed || homeSeriesWins >= needed
+                                  || static_cast<int>(seriesScores.size()) >= seriesLen;
+                hint = decided ? "Space: series summary  T: team select  R: replay"
+                               : "Space: series summary  T: team select  R: replay";
+                (void)decided;
+                hint = "Space: series summary  T: team select  R: replay game";
+            } else if (replayPaused) {
+                hint = "P pitch  S resume  <-/-> seek  Space next  T teams  R replay";
+            } else if (autoPlay) {
+                hint = "P pitch  Space next  A auto:on  S pause  <-/-> seek  T teams";
+            } else {
+                hint = "P pitch  Space next  A auto  S pause  <-/-> seek  T teams";
+            }
+            drawText(window, font, hint, {34.0f, 790.0f}, 13, {200, 205, 202});
+        }
+
+        // ── ビュー切り替えフェードオーバーレイ ──────────────────────────────
+        if (viewTransition != ViewTransition::None) {
+            const float t = transitionClock.getElapsedTime().asSeconds();
+            float alpha = 0.0f;
+            if (viewTransition == ViewTransition::FadingOut) {
+                alpha = std::min(t / TransitionHalf, 1.0f);
+                if (t >= TransitionHalf) {
+                    visualMode = targetMode;
+                    viewTransition = ViewTransition::FadingIn;
+                    transitionClock.restart();
+                    alpha = 1.0f;
+                }
+            } else { // FadingIn
+                alpha = 1.0f - std::min(t / TransitionHalf, 1.0f);
+                if (t >= TransitionHalf) {
+                    viewTransition = ViewTransition::None;
+                    alpha = 0.0f;
+                }
+            }
+            if (alpha > 0.0f) {
+                sf::RectangleShape veil({WindowWidth, WindowHeight});
+                veil.setFillColor({0, 0, 0, static_cast<std::uint8_t>(alpha * 255.0f)});
+                window.draw(veil);
+            }
         }
 
         window.display();

@@ -22,6 +22,7 @@ struct PlayerBoxScore {
     int sacBunts   = 0;  // 犠打 (AB にカウントしない)
     int gidp       = 0;  // 併殺打 (Ground Into Double Play)
     int reachedOnError = 0; // エラーで出塁
+    int hitByPitch     = 0;  // 死球 (HBP)
     int stolenBases    = 0;  // 盗塁成功
     int caughtStealing = 0;  // 盗塁刺
     int putouts          = 0;

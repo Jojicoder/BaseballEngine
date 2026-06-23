@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -19,25 +20,37 @@ constexpr int GAMES_PER_SERIES = 3;
 struct BatterAccum {
     std::string name;
     std::string team;
-    int atBats     = 0;
-    int hits       = 0;
-    int doubles_   = 0;
-    int triples    = 0;
-    int homeRuns   = 0;
-    int walks      = 0;
-    int strikeouts = 0;
-    int rbi        = 0;
-    int totalBases = 0;
-    int sacFlies   = 0;
+    int atBats      = 0;
+    int hits        = 0;
+    int doubles_    = 0;
+    int triples     = 0;
+    int homeRuns    = 0;
+    int walks       = 0;
+    int strikeouts  = 0;
+    int hitByPitch  = 0;
+    int rbi         = 0;
+    int totalBases  = 0;
+    int sacFlies    = 0;
+    int stolenBases    = 0;
+    int caughtStealing = 0;
 
-    int    pa()  const { return atBats + walks + sacFlies; }
+    int    pa()  const { return atBats + walks + hitByPitch + sacFlies; }
     double avg() const { return atBats > 0 ? static_cast<double>(hits) / atBats : 0.0; }
     double obp() const {
-        const int d = atBats + walks + sacFlies;
-        return d > 0 ? static_cast<double>(hits + walks) / d : 0.0;
+        const int d = atBats + walks + hitByPitch + sacFlies;
+        return d > 0 ? static_cast<double>(hits + walks + hitByPitch) / d : 0.0;
     }
-    double slg() const { return atBats > 0 ? static_cast<double>(totalBases) / atBats : 0.0; }
-    double ops() const { return obp() + slg(); }
+    double slg()  const { return atBats > 0 ? static_cast<double>(totalBases) / atBats : 0.0; }
+    double ops()  const { return obp() + slg(); }
+    double babip() const {
+        // (H - HR) / (AB - SO - HR + SF)
+        const int bip = atBats - strikeouts - homeRuns + sacFlies;
+        return bip > 0 ? static_cast<double>(hits - homeRuns) / bip : 0.0;
+    }
+    double sbPct() const {
+        const int att = stolenBases + caughtStealing;
+        return att > 0 ? static_cast<double>(stolenBases) / att : 0.0;
+    }
 };
 
 struct PitcherAccum {
@@ -65,20 +78,56 @@ struct PitcherAccum {
 
 struct TeamBaserunAccum {
     std::string name;
-    int xbt = 0;
-    int oob = 0;
-    int toh = 0;
-    int sfa = 0;
-    int sfs = 0;
-    int ofa = 0;
+    int xbt   = 0;
+    int oob   = 0;
+    int toh   = 0;
+    int sfa   = 0;
+    int sfs   = 0;
+    int ofa   = 0;
     int games = 0;
+    // BABIP / 2B-BIP 用
+    int hits       = 0;
+    int homeRuns   = 0;
+    int atBats     = 0;
+    int strikeouts = 0;
+    int sacFlies   = 0;
+    int doubles_   = 0;
+    int walks      = 0;
 
-    double sfPct()   const { return sfa > 0 ? sfs * 100.0 / sfa : 0.0; }
-    double xbtPerG() const { return games > 0 ? static_cast<double>(xbt) / games : 0.0; }
-    double oobPerG() const { return games > 0 ? static_cast<double>(oob) / games : 0.0; }
-    double tohPerG() const { return games > 0 ? static_cast<double>(toh) / games : 0.0; }
-    double ofaPerG() const { return games > 0 ? static_cast<double>(ofa) / games : 0.0; }
+    double sfPct()    const { return sfa > 0 ? sfs * 100.0 / sfa : 0.0; }
+    double xbtPerG()  const { return games > 0 ? static_cast<double>(xbt)  / games : 0.0; }
+    double oobPerG()  const { return games > 0 ? static_cast<double>(oob)  / games : 0.0; }
+    double tohPerG()  const { return games > 0 ? static_cast<double>(toh)  / games : 0.0; }
+    double ofaPerG()  const { return games > 0 ? static_cast<double>(ofa)  / games : 0.0; }
+    double babip() const {
+        const int bip = atBats - strikeouts - homeRuns + sacFlies;
+        return bip > 0 ? static_cast<double>(hits - homeRuns) / bip : 0.0;
+    }
+    double twoBperBIP() const {
+        const int bip = atBats - strikeouts - homeRuns + sacFlies;
+        return bip > 0 ? static_cast<double>(doubles_) / bip : 0.0;
+    }
+    int pa() const { return atBats + walks; }
+    double kPct()  const { return pa() > 0 ? strikeouts * 100.0 / pa() : 0.0; }
+    double bbPct() const { return pa() > 0 ? walks      * 100.0 / pa() : 0.0; }
+    double batAvg() const { return atBats > 0 ? static_cast<double>(hits) / atBats : 0.0; }
 };
+
+// ポジション別守備累積
+struct PosDefAccum {
+    int putouts = 0;
+    int assists  = 0;
+    int errors   = 0;
+
+    double fpct() const {
+        const int total = putouts + assists + errors;
+        return total > 0 ? static_cast<double>(putouts + assists) / total : 1.0;
+    }
+};
+
+// チームごとのポジション別守備累積
+// key: Position enum → PosDefAccum
+using PosDefMap = std::map<joji::Position, PosDefAccum>;
 
 struct TeamAccum {
     std::string name;
@@ -105,6 +154,7 @@ struct TitleBoard {
     std::map<std::string, int> winTitle;
     std::map<std::string, int> saveTitle;
     std::map<std::string, int> kTitle;
+    std::map<std::string, int> sbTitle;
 };
 
 void awardTitles(const std::map<std::string, BatterAccum>& batters,
@@ -146,6 +196,8 @@ void awardTitles(const std::map<std::string, BatterAccum>& batters,
         board.homeRunKing[b->name]++;
     if (auto* b = bestB([](const BatterAccum& a, const BatterAccum& x){ return a.rbi > x.rbi; }))
         board.rbiKing[b->name]++;
+    if (auto* b = bestB([](const BatterAccum& a, const BatterAccum& x){ return a.stolenBases > x.stolenBases; }))
+        board.sbTitle[b->name]++;
     if (auto* p = bestPFiltered(minIP, [](const PitcherAccum& a, const PitcherAccum& x){ return a.era() < x.era(); }))
         board.eraTitle[p->name]++;
     if (auto* p = bestP([](const PitcherAccum& a, const PitcherAccum& x){ return a.wins > x.wins; }))
@@ -163,19 +215,22 @@ void accumBatters(const std::vector<joji::PlayerBoxScore>& stats, const std::str
     for (const auto& ps : stats) {
         const std::string key = teamName + "|" + ps.name;
         for (auto* m : {&m1, &m2}) {
-            auto& b    = (*m)[key];
-            b.name      = ps.name;
-            b.team      = teamName;
-            b.atBats   += ps.atBats;
-            b.hits     += ps.hits;
-            b.doubles_ += ps.doubles;
-            b.triples  += ps.triples;
-            b.homeRuns += ps.homeRuns;
-            b.walks    += ps.walks;
-            b.strikeouts += ps.strikeouts;
-            b.rbi      += ps.rbi;
-            b.totalBases += ps.totalBases;
-            b.sacFlies += ps.sacFlies;
+            auto& b       = (*m)[key];
+            b.name         = ps.name;
+            b.team         = teamName;
+            b.atBats      += ps.atBats;
+            b.hits        += ps.hits;
+            b.doubles_    += ps.doubles;
+            b.triples     += ps.triples;
+            b.homeRuns    += ps.homeRuns;
+            b.walks       += ps.walks;
+            b.strikeouts  += ps.strikeouts;
+            b.hitByPitch  += ps.hitByPitch;
+            b.rbi         += ps.rbi;
+            b.totalBases  += ps.totalBases;
+            b.sacFlies    += ps.sacFlies;
+            b.stolenBases    += ps.stolenBases;
+            b.caughtStealing += ps.caughtStealing;
         }
     }
 }
@@ -185,44 +240,51 @@ void accumPitchers(const std::vector<joji::PitcherBoxScore>& stats, const std::s
     for (const auto& ps : stats) {
         const std::string key = teamName + "|" + ps.name;
         for (auto* m : {&m1, &m2}) {
-            auto& p         = (*m)[key];
-            p.name           = ps.name;
-            p.team           = teamName;
-            p.games         += ps.games;
-            p.gamesStarted  += ps.gamesStarted;
-            p.wins          += ps.wins;
-            p.outsRecorded  += ps.outsRecorded;
-            p.runsAllowed   += ps.runsAllowed;
-            p.earnedRuns    += ps.earnedRuns;
-            p.strikeouts    += ps.strikeouts;
-            p.walks         += ps.walks;
+            auto& p          = (*m)[key];
+            p.name            = ps.name;
+            p.team            = teamName;
+            p.games          += ps.games;
+            p.gamesStarted   += ps.gamesStarted;
+            p.wins           += ps.wins;
+            p.outsRecorded   += ps.outsRecorded;
+            p.runsAllowed    += ps.runsAllowed;
+            p.earnedRuns     += ps.earnedRuns;
+            p.strikeouts     += ps.strikeouts;
+            p.walks          += ps.walks;
             p.homeRunsAllowed += ps.homeRunsAllowed;
-            p.hitsAllowed   += ps.hitsAllowed;
-            p.saves         += ps.saves;
-            p.holds         += ps.holds;
-            p.blownSaves    += ps.blownSaves;
+            p.hitsAllowed    += ps.hitsAllowed;
+            p.saves          += ps.saves;
+            p.holds          += ps.holds;
+            p.blownSaves     += ps.blownSaves;
         }
     }
 }
 
-void runSeason(const std::vector<joji::Team>& teams,
+void runSeason(std::vector<joji::Team>& teams,
                std::vector<TeamAccum>& acc,
                std::map<std::string, BatterAccum>&    allBatters,
                std::map<std::string, PitcherAccum>&   allPitchers,
                std::map<std::string, BatterAccum>&    seasonBatters,
                std::map<std::string, PitcherAccum>&   seasonPitchers,
                std::map<std::string, TeamBaserunAccum>& baserunMap,
+               std::map<std::string, PosDefMap>&       posDefMap,
                uint32_t& seed)
 {
     const int n = static_cast<int>(teams.size());
     std::vector<int> sw(n, 0), sl(n, 0), srs(n, 0), sra(n, 0);
+    // 5人ローテーション追跡: チームごとに何試合目かをカウント
+    std::vector<int> rotSlot(n, 0);
 
     for (int i = 0; i < n; ++i) {
         for (int j = i + 1; j < n; ++j) {
             for (int g = 0; g < GAMES_PER_SERIES; ++g) {
+                teams[i].setStarterSlot(rotSlot[i]++ % 5);
+                teams[j].setStarterSlot(rotSlot[j]++ % 5);
                 joji::GameEngine engine{
                     teams[i], teams[j],
-                    joji::Random{std::optional<uint32_t>{seed++}}
+                    joji::Random{std::optional<uint32_t>{seed++}},
+                    joji::GameRules{},
+                    teams[j].homeBallpark()
                 };
                 std::ostringstream sink;
                 engine.simulate(sink);
@@ -238,21 +300,44 @@ void runSeason(const std::vector<joji::Team>& teams,
                 accumPitchers(engine.awayPitcherStats(), teams[i].name(), allPitchers, seasonPitchers);
                 accumPitchers(engine.homePitcherStats(), teams[j].name(), allPitchers, seasonPitchers);
 
+                // 走塁 / 外野補殺 + BABIP用チームトータル
                 auto accumBR = [&](const joji::TeamBoxScore& bs,
                                    const std::vector<joji::PlayerBoxScore>& ps,
                                    const std::string& teamName) {
                     auto& br = baserunMap[teamName];
-                    br.name = teamName;
-                    br.xbt += bs.extraBasesTaken;
-                    br.oob += bs.runnerOutsOnBases;
-                    br.toh += bs.runnersThrownOutAtHome;
-                    br.sfa += bs.sacFlyAttempts;
-                    br.sfs += bs.sacFlySuccesses;
+                    br.name  = teamName;
+                    br.xbt  += bs.extraBasesTaken;
+                    br.oob  += bs.runnerOutsOnBases;
+                    br.toh  += bs.runnersThrownOutAtHome;
+                    br.sfa  += bs.sacFlyAttempts;
+                    br.sfs  += bs.sacFlySuccesses;
                     br.games += 1;
                     for (const auto& p : ps) br.ofa += p.outfieldAssists;
+                    // BABIP用
+                    br.hits       += bs.hits;
+                    br.homeRuns   += bs.homeRuns;
+                    br.atBats     += bs.atBats;
+                    br.strikeouts += bs.strikeouts;
+                    br.sacFlies   += bs.sacFlySuccesses;
+                    br.doubles_   += bs.doubles_;
+                    br.walks      += bs.walks;
                 };
                 accumBR(engine.awayBoxScore(), engine.awayPlayerStats(), teams[i].name());
                 accumBR(engine.homeBoxScore(), engine.homePlayerStats(), teams[j].name());
+
+                // ポジション別守備累積
+                auto accumPosDef = [&](const std::vector<joji::PlayerBoxScore>& ps,
+                                       const std::string& teamName) {
+                    auto& pdm = posDefMap[teamName];
+                    for (const auto& p : ps) {
+                        auto& pd = pdm[p.position];
+                        pd.putouts += p.putouts;
+                        pd.assists  += p.assists;
+                        pd.errors   += p.errors;
+                    }
+                };
+                accumPosDef(engine.awayPlayerStats(), teams[i].name());
+                accumPosDef(engine.homePlayerStats(), teams[j].name());
             }
         }
     }
@@ -263,6 +348,58 @@ void runSeason(const std::vector<joji::Team>& teams,
         acc[i].totalRS += srs[i];
         acc[i].totalRA += sra[i];
         acc[i].seasons++;
+    }
+}
+
+// ── プレーオフ ───────────────────────────────────────────────────────────────
+
+// Returns 0 if teamA wins, 1 if teamB wins
+int runPlayoffSeries(const joji::Team& teamA, const joji::Team& teamB,
+                     int maxGames, uint32_t& seed) {
+    const int needed = maxGames / 2 + 1;
+    int winsA = 0, winsB = 0;
+    while (winsA < needed && winsB < needed) {
+        joji::GameEngine eng{teamA, teamB,
+                             joji::Random{std::optional<uint32_t>{seed++}}};
+        std::ostringstream sink;
+        eng.simulate(sink);
+        const auto res = eng.result();
+        if (res.type == joji::GameResultType::AwayWin) winsA++;
+        else winsB++;
+    }
+    return (winsA >= needed) ? 0 : 1;
+}
+
+// Run one season's playoffs; returns champion name
+// Top 4 teams by season wins: semis (best-of-3), finals (best-of-5)
+std::string runPlayoffs(const std::vector<joji::Team>& teams,
+                        const std::vector<int>& seasonWins,
+                        uint32_t& seed) {
+    const int n = static_cast<int>(teams.size());
+    std::vector<int> order(n);
+    std::iota(order.begin(), order.end(), 0);
+    std::stable_sort(order.begin(), order.end(),
+                     [&seasonWins](int a, int b){ return seasonWins[a] > seasonWins[b]; });
+
+    const int s1 = order[0], s4 = order[3];
+    const int s2 = order[1], s3 = order[2];
+    const int w1 = (runPlayoffSeries(teams[s1], teams[s4], 3, seed) == 0) ? s1 : s4;
+    const int w2 = (runPlayoffSeries(teams[s2], teams[s3], 3, seed) == 0) ? s2 : s3;
+    const int champ = (runPlayoffSeries(teams[w1], teams[w2], 5, seed) == 0) ? w1 : w2;
+    return teams[champ].name();
+}
+
+void printChampions(const std::map<std::string, int>& counts, int nSeasons) {
+    std::vector<std::pair<std::string, int>> sorted(counts.begin(), counts.end());
+    std::sort(sorted.begin(), sorted.end(),
+              [](const auto& a, const auto& b){ return a.second > b.second; });
+
+    std::cout << "\n=== Playoff Champions (" << nSeasons << " seasons) ===\n";
+    for (const auto& [name, c] : sorted) {
+        const int barLen = static_cast<int>(c * 30.0 / nSeasons + 0.5);
+        std::cout << std::left  << std::setw(24) << name
+                  << std::right << std::setw(4)  << c
+                  << "  " << std::string(barLen, '#') << "\n";
     }
 }
 
@@ -306,7 +443,7 @@ void printStandings(const std::vector<TeamAccum>& acc) {
     }
 }
 
-// 打者ランキング (AVG / HR / RBI)
+// 打者ランキング (AVG / HR / RBI / SB)
 void printBattingLeaders(std::vector<BatterAccum> vec, int minPA, int topN) {
     vec.erase(std::remove_if(vec.begin(), vec.end(),
         [minPA](const BatterAccum& b){ return b.pa() < minPA; }), vec.end());
@@ -318,7 +455,7 @@ void printBattingLeaders(std::vector<BatterAccum> vec, int minPA, int topN) {
                   << std::setw(5)  << "Tm";
     };
 
-    // AVG / OBP / SLG / OPS
+    // AVG / OBP / SLG / OPS / BABIP
     {
         auto s = vec;
         std::sort(s.begin(), s.end(), [](const BatterAccum& a, const BatterAccum& b){ return a.avg() > b.avg(); });
@@ -329,15 +466,17 @@ void printBattingLeaders(std::vector<BatterAccum> vec, int minPA, int topN) {
                   << std::setw(7) << "OBP"
                   << std::setw(7) << "SLG"
                   << std::setw(7) << "OPS"
-                  << "\n" << std::string(58, '-') << "\n";
+                  << std::setw(7) << "BABIP"
+                  << "\n" << std::string(65, '-') << "\n";
         int rk = 1;
         for (const auto& b : s) {
             if (rk > topN) break;
-            std::ostringstream avg, obp, slg, ops;
+            std::ostringstream avg, obp, slg, ops, bab;
             avg << std::fixed << std::setprecision(3) << b.avg();
             obp << std::fixed << std::setprecision(3) << b.obp();
             slg << std::fixed << std::setprecision(3) << b.slg();
             ops << std::fixed << std::setprecision(3) << b.ops();
+            bab << std::fixed << std::setprecision(3) << b.babip();
             const std::string abbr = b.team.size() >= 3 ? b.team.substr(0, 3) : b.team;
             std::cout << std::left  << std::setw(4) << rk++
                       << std::setw(20) << b.name
@@ -348,6 +487,7 @@ void printBattingLeaders(std::vector<BatterAccum> vec, int minPA, int topN) {
                       << std::setw(7) << obp.str()
                       << std::setw(7) << slg.str()
                       << std::setw(7) << ops.str()
+                      << std::setw(7) << bab.str()
                       << "\n";
         }
     }
@@ -405,6 +545,39 @@ void printBattingLeaders(std::vector<BatterAccum> vec, int minPA, int topN) {
                       << "\n";
         }
     }
+
+    // Stolen Bases (フィルターなし)
+    {
+        auto s = vec;
+        // フィルターを外して全員対象
+        std::vector<BatterAccum> all = s;
+        std::sort(all.begin(), all.end(), [](const BatterAccum& a, const BatterAccum& b){ return a.stolenBases > b.stolenBases; });
+        header("Stolen Bases");
+        std::cout << std::right
+                  << std::setw(6) << "SB"
+                  << std::setw(5) << "CS"
+                  << std::setw(8) << "SB%"
+                  << std::setw(8) << "AVG"
+                  << "\n" << std::string(56, '-') << "\n";
+        int rk = 1;
+        for (const auto& b : all) {
+            if (rk > topN) break;
+            if (b.stolenBases == 0 && b.caughtStealing == 0) break;
+            std::ostringstream sbp, avg;
+            sbp << std::fixed << std::setprecision(1) << b.sbPct() * 100.0 << "%";
+            avg << std::fixed << std::setprecision(3) << b.avg();
+            const std::string abbr = b.team.size() >= 3 ? b.team.substr(0, 3) : b.team;
+            std::cout << std::left  << std::setw(4) << rk++
+                      << std::setw(20) << b.name
+                      << std::setw(5)  << abbr
+                      << std::right
+                      << std::setw(6) << b.stolenBases
+                      << std::setw(5) << b.caughtStealing
+                      << std::setw(8) << sbp.str()
+                      << std::setw(8) << avg.str()
+                      << "\n";
+        }
+    }
 }
 
 // 投手ランキング (ERA / W / SV / K)
@@ -449,7 +622,7 @@ void printPitchingLeaders(std::vector<PitcherAccum> vec, double minIP, int topN)
         }
     }
 
-    // Wins (フィルターなし)
+    // Wins
     {
         auto s = vec;
         std::sort(s.begin(), s.end(), [](const PitcherAccum& a, const PitcherAccum& b){ return a.wins > b.wins; });
@@ -562,10 +735,94 @@ void printTitleBoard(const TitleBoard& board, int nSeasons) {
     std::cout << std::left << std::setw(20) << "首位打者"     << topStr(board.battingChamp) << "\n";
     std::cout << std::left << std::setw(20) << "本塁打王"     << topStr(board.homeRunKing)  << "\n";
     std::cout << std::left << std::setw(20) << "打点王"       << topStr(board.rbiKing)      << "\n";
+    std::cout << std::left << std::setw(20) << "盗塁王"       << topStr(board.sbTitle)      << "\n";
     std::cout << std::left << std::setw(20) << "最優秀防御率" << topStr(board.eraTitle)     << "\n";
     std::cout << std::left << std::setw(20) << "最多勝"       << topStr(board.winTitle)     << "\n";
     std::cout << std::left << std::setw(20) << "最多セーブ"   << topStr(board.saveTitle)    << "\n";
     std::cout << std::left << std::setw(20) << "最多奪三振"   << topStr(board.kTitle)       << "\n";
+}
+
+const char* posAbbr(joji::Position pos) {
+    switch (pos) {
+        case joji::Position::Pitcher:     return "P";
+        case joji::Position::Catcher:     return "C";
+        case joji::Position::FirstBase:   return "1B";
+        case joji::Position::SecondBase:  return "2B";
+        case joji::Position::ThirdBase:   return "3B";
+        case joji::Position::Shortstop:   return "SS";
+        case joji::Position::LeftField:   return "LF";
+        case joji::Position::CenterField: return "CF";
+        case joji::Position::RightField:  return "RF";
+    }
+    return "?";
+}
+
+// ポジション表示順
+const joji::Position kPosOrder[] = {
+    joji::Position::Catcher,
+    joji::Position::FirstBase,
+    joji::Position::SecondBase,
+    joji::Position::ThirdBase,
+    joji::Position::Shortstop,
+    joji::Position::LeftField,
+    joji::Position::CenterField,
+    joji::Position::RightField,
+    joji::Position::Pitcher,
+};
+
+void printPositionDefense(const std::map<std::string, PosDefMap>& posDefMap,
+                          const std::vector<TeamAccum>& acc) {
+    // 順位順に並べたチームリスト
+    std::vector<std::string> teamOrder;
+    {
+        std::vector<TeamAccum> sorted = acc;
+        std::sort(sorted.begin(), sorted.end(),
+                  [](const TeamAccum& a, const TeamAccum& b){ return a.pct() > b.pct(); });
+        for (const auto& t : sorted) teamOrder.push_back(t.name);
+    }
+
+    std::cout << "\n=== Position Defense (PO-A-E, FPCT) ===\n";
+
+    for (const auto& teamName : teamOrder) {
+        auto it = posDefMap.find(teamName);
+        if (it == posDefMap.end()) continue;
+        const PosDefMap& pdm = it->second;
+
+        std::cout << "\n" << teamName << "\n"
+                  << std::left  << std::setw(5)  << "Pos"
+                  << std::right << std::setw(8)  << "PO"
+                  << std::setw(8)  << "A"
+                  << std::setw(8)  << "E"
+                  << std::setw(8)  << "FPCT"
+                  << "\n" << std::string(37, '-') << "\n";
+
+        int totPO = 0, totA = 0, totE = 0;
+        for (joji::Position pos : kPosOrder) {
+            auto pit = pdm.find(pos);
+            if (pit == pdm.end()) continue;
+            const PosDefAccum& pd = pit->second;
+            std::ostringstream fp;
+            fp << std::fixed << std::setprecision(3) << pd.fpct();
+            std::cout << std::left  << std::setw(5)  << posAbbr(pos)
+                      << std::right << std::setw(8)  << pd.putouts
+                      << std::setw(8)  << pd.assists
+                      << std::setw(8)  << pd.errors
+                      << std::setw(8)  << fp.str()
+                      << "\n";
+            totPO += pd.putouts; totA += pd.assists; totE += pd.errors;
+        }
+        const double totFpct = (totPO + totA + totE) > 0
+            ? static_cast<double>(totPO + totA) / (totPO + totA + totE) : 1.0;
+        std::ostringstream tfp;
+        tfp << std::fixed << std::setprecision(3) << totFpct;
+        std::cout << std::string(37, '-') << "\n"
+                  << std::left  << std::setw(5)  << "TOT"
+                  << std::right << std::setw(8)  << totPO
+                  << std::setw(8)  << totA
+                  << std::setw(8)  << totE
+                  << std::setw(8)  << tfp.str()
+                  << "\n";
+    }
 }
 
 } // namespace
@@ -576,7 +833,7 @@ int main(int argc, char* argv[]) {
     std::cout << "Joji Baseball Engine v1.0 — Season Runner\n"
               << nSeasons << " seasons  x  45 games  =  " << nSeasons * 45 << " total\n";
 
-    const auto teams = joji::allTeams();
+    auto teams = joji::allTeams();
     const int n = static_cast<int>(teams.size());
 
     std::vector<TeamAccum> acc(n);
@@ -585,26 +842,40 @@ int main(int argc, char* argv[]) {
     std::map<std::string, BatterAccum>      allBatters;
     std::map<std::string, PitcherAccum>     allPitchers;
     std::map<std::string, TeamBaserunAccum> baserunMap;
+    std::map<std::string, PosDefMap>        posDefMap;
     TitleBoard titles;
+    std::map<std::string, int> championCount;
 
     uint32_t seed = 42;
-    // 1シーズンのタイトル基準
-    const int    minPAperSeason = 80;   // ~80% of expected ~100 PA/season
-    const double minIPperSeason = 25.0; // ~30% of expected ~80 IP/season
+    const int    minPAperSeason = 80;
+    const double minIPperSeason = 25.0;
 
     for (int s = 0; s < nSeasons; ++s) {
         std::map<std::string, BatterAccum>  seasonBatters;
         std::map<std::string, PitcherAccum> seasonPitchers;
 
-        runSeason(teams, acc, allBatters, allPitchers, seasonBatters, seasonPitchers, baserunMap, seed);
+        // Snapshot wins before season for playoff seeding
+        std::vector<int> winsSnapshot(n);
+        for (int i = 0; i < n; ++i) winsSnapshot[i] = acc[i].totalW;
+
+        runSeason(teams, acc, allBatters, allPitchers,
+                  seasonBatters, seasonPitchers,
+                  baserunMap, posDefMap, seed);
         awardTitles(seasonBatters, seasonPitchers, titles, minPAperSeason, minIPperSeason);
+
+        // Per-season wins for playoff seeding
+        if (n >= 4) {
+            std::vector<int> seasonWins(n);
+            for (int i = 0; i < n; ++i) seasonWins[i] = acc[i].totalW - winsSnapshot[i];
+            const std::string champ = runPlayoffs(teams, seasonWins, seed);
+            championCount[champ]++;
+        }
 
         if ((s + 1) % 10 == 0)
             std::cerr << "  " << (s + 1) << "/" << nSeasons << " done\r";
     }
     std::cerr << "\n";
 
-    // キャリアリーダーの最低基準: nSeasons の半分以上出場
     const int    minPAcareer = minPAperSeason * nSeasons / 2;
     const double minIPcareer = minIPperSeason * nSeasons / 2;
 
@@ -614,6 +885,7 @@ int main(int argc, char* argv[]) {
     for (const auto& [k, p] : allPitchers) pitcherVec.push_back(p);
 
     printStandings(acc);
+    printChampions(championCount, nSeasons);
 
     std::cout << "\n=== Batting Leaders (min " << minPAcareer << " PA) ===";
     printBattingLeaders(batterVec, minPAcareer, 10);
@@ -623,7 +895,7 @@ int main(int argc, char* argv[]) {
 
     printTitleBoard(titles, nSeasons);
 
-    // ── 走塁 / 外野補殺 ───────────────────────────────────────────────────────
+    // ── 走塁 / 外野補殺 / BABIP / 2B-BIP ────────────────────────────────────
     {
         std::vector<TeamAccum> sorted = acc;
         std::sort(sorted.begin(), sorted.end(),
@@ -634,36 +906,106 @@ int main(int argc, char* argv[]) {
         for (auto& kv : baserunMap) brVec.push_back(kv.second);
         std::sort(brVec.begin(), brVec.end(),
             [&sorted](const TeamBaserunAccum& a, const TeamBaserunAccum& b) {
-                auto rank = [&sorted](const std::string& n) {
+                auto rank = [&sorted](const std::string& nm) {
                     for (std::size_t i = 0; i < sorted.size(); ++i)
-                        if (sorted[i].name == n) return i;
+                        if (sorted[i].name == nm) return i;
                     return sorted.size();
                 };
                 return rank(a.name) < rank(b.name);
             });
 
-        std::cout << "\n=== Baserunning / Home Outfield Assist (per game avg) ===\n";
+        std::cout << "\n=== Baserunning / BABIP / 2B-BIP (per game avg) ===\n";
         std::cout << std::left  << std::setw(22) << "Team"
                   << std::right << std::setw(7)  << "XBT/G"
                   << std::setw(7)  << "TOH/G"
                   << std::setw(7)  << "SF%"
                   << std::setw(8)  << "H-OFA/G"
-                  << "\n" << std::string(49, '-') << "\n";
+                  << std::setw(8)  << "BABIP"
+                  << std::setw(8)  << "2B/BIP"
+                  << "\n" << std::string(67, '-') << "\n";
 
         for (const auto& t : brVec) {
-            std::ostringstream xbt, toh, sfp, ofa;
-            xbt << std::fixed << std::setprecision(2) << t.xbtPerG();
-            toh << std::fixed << std::setprecision(3) << t.tohPerG();
-            sfp << std::fixed << std::setprecision(1) << t.sfPct() << "%";
-            ofa << std::fixed << std::setprecision(3) << t.ofaPerG();
+            std::ostringstream xbt, toh, sfp, ofa, bab, twob;
+            xbt  << std::fixed << std::setprecision(2) << t.xbtPerG();
+            toh  << std::fixed << std::setprecision(3) << t.tohPerG();
+            sfp  << std::fixed << std::setprecision(1) << t.sfPct() << "%";
+            ofa  << std::fixed << std::setprecision(3) << t.ofaPerG();
+            bab  << std::fixed << std::setprecision(3) << t.babip();
+            twob << std::fixed << std::setprecision(3) << t.twoBperBIP();
             std::cout << std::left  << std::setw(22) << t.name
                       << std::right << std::setw(7)  << xbt.str()
                       << std::setw(7)  << toh.str()
                       << std::setw(7)  << sfp.str()
                       << std::setw(8)  << ofa.str()
+                      << std::setw(8)  << bab.str()
+                      << std::setw(8)  << twob.str()
+                      << "\n";
+        }
+
+        // ── リーグ打撃サマリー (K% / BB% / BA / BABIP) ──────────────────────────
+        // Sorted by standings order so it's easy to cross-reference with standings.
+        std::cout << "\n=== League Batting Summary ===\n";
+        std::cout << std::left  << std::setw(22) << "Team"
+                  << std::right << std::setw(7)  << "K%"
+                  << std::setw(7)  << "BB%"
+                  << std::setw(7)  << "BA"
+                  << std::setw(8)  << "BABIP"
+                  << std::setw(8)  << "ERA"
+                  << "\n" << std::string(59, '-') << "\n";
+        for (const auto& t : brVec) {
+            // ERA approximated as RA/G (from TeamAccum)
+            const double era = [&]() -> double {
+                for (const auto& a : acc) {
+                    if (a.name == t.name) return a.raPerG();
+                }
+                return 0.0;
+            }();
+            std::ostringstream kp, bbp, ba, bab, er;
+            kp  << std::fixed << std::setprecision(1) << t.kPct()  << "%";
+            bbp << std::fixed << std::setprecision(1) << t.bbPct() << "%";
+            ba  << std::fixed << std::setprecision(3) << t.batAvg();
+            bab << std::fixed << std::setprecision(3) << t.babip();
+            er  << std::fixed << std::setprecision(2) << era;
+            std::cout << std::left  << std::setw(22) << t.name
+                      << std::right << std::setw(7)  << kp.str()
+                      << std::setw(7)  << bbp.str()
+                      << std::setw(7)  << ba.str()
+                      << std::setw(8)  << bab.str()
+                      << std::setw(8)  << er.str()
+                      << "\n";
+        }
+        // League averages
+        {
+            int totK = 0, totBB = 0, totPA = 0;
+            double totBIP = 0.0, totHR = 0.0;
+            int totAB = 0, totHits = 0;
+            for (const auto& t : brVec) {
+                totK  += t.strikeouts; totBB += t.walks; totPA += t.pa();
+                totAB += t.atBats;     totHits += t.hits; totHR += t.homeRuns;
+                totBIP += t.atBats - t.strikeouts - t.homeRuns + t.sacFlies;
+            }
+            const double lgK   = totPA  > 0 ? totK  * 100.0 / totPA  : 0.0;
+            const double lgBB  = totPA  > 0 ? totBB * 100.0 / totPA  : 0.0;
+            const double lgBA  = totAB  > 0 ? static_cast<double>(totHits) / totAB : 0.0;
+            const double lgBABIP = totBIP > 0 ? (totHits - totHR) / totBIP : 0.0;
+            std::cout << std::string(59, '-') << "\n";
+            std::ostringstream kp, bbp, ba, bab;
+            kp  << std::fixed << std::setprecision(1) << lgK  << "%";
+            bbp << std::fixed << std::setprecision(1) << lgBB << "%";
+            ba  << std::fixed << std::setprecision(3) << lgBA;
+            bab << std::fixed << std::setprecision(3) << lgBABIP;
+            std::cout << std::left  << std::setw(22) << "League Average"
+                      << std::right << std::setw(7)  << kp.str()
+                      << std::setw(7)  << bbp.str()
+                      << std::setw(7)  << ba.str()
+                      << std::setw(8)  << bab.str()
+                      << std::setw(8)  << "--"
                       << "\n";
         }
     }
+
+    // ── ポジション別守備指標 ────────────────────────────────────────────────
+    printPositionDefense(posDefMap, acc);
 
     return 0;
 }

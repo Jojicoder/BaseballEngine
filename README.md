@@ -1,245 +1,282 @@
 # Joji Baseball Engine
 
-## Version
+> **Current Branch:** v1.6 Runner / Throw / Replay Foundation
 
-v1.0 Fixed Balance
+A C++ baseball simulation engine focused on realistic pitch-by-pitch gameplay, batted-ball physics, fielding resolution, runner advancement, league simulation, season simulation, replay systems, and SFML visualization.
 
-Joji Baseball Engine is a C++ baseball simulation engine with pitch-by-pitch
-logic, batted-ball physics, fielding resolution, league simulation, season
-simulation, and SFML visualization.
+The long-term goal is to create a baseball engine capable of resolving games through physics, player attributes, and decision-making systems rather than predefined outcomes.
 
-v1.0 fixes the core balance target for team identity, run environment, runner
-metrics, and season-runner output.
+---
+
+## Table of Contents
+
+- [Architecture](#architecture)
+- [Current Features](#current-features)
+- [Metrics](#metrics)
+- [Teams](#teams)
+- [Build & Run](#build--run)
+- [Roadmap](#roadmap)
+
+---
 
 ## Architecture
 
-The engine is organized around a stable simulation core and a future export
-boundary:
+The simulation core is separated from export, replay, and visualization layers.
 
-```text
-GameEngine internal types
-↓
+### Export Boundary
+
+```
+GameEngine Internal Types
+        ↓
 ExportTypes / Snapshot
-↓
-JsonExporter
-↓
-Java API
-↓
+        ↓
+  JsonExporter
+        ↓
+   Java API
+        ↓
 React / JojiStats
 ```
 
-The v1.1 foundation starts this boundary with `include/ExportTypes.h`.
-Snapshot types are intended to keep future JSON, API, and frontend code from
-depending directly on mutable `GameEngine` internals.
+Snapshot types isolate external systems from mutable engine internals.
 
-The v1.2 animation foundation adds a display/replay boundary:
+### Animation Boundary
 
-```text
-GameEngine
-↓
+```
+  GameEngine
+      ↓
 PlayResult / Snapshot
-↓
-AnimationPlan
-↓
-SFML Renderer / React Replay
+      ↓
+ AnimationPlan
+      ↓
+SFML Renderer
+      ↓
+ React Replay
 ```
 
-`include/AnimationTypes.h` defines primitive, STL-only animation data structures
-that can be shared by SFML, JSON export, and future React replay work.
+Animation systems consume immutable replay-friendly data structures rather than direct engine state.
+
+### Replay Boundary
+
+```
+  GameEngine
+      ↓
+ReplayTimeline
+      ↓
+  ReplayEvent
+      ↓
+ AnimationPlan
+      ↓
+   Renderer
+```
+
+This allows future replay support in SFML, JSON exports, Java APIs, and React clients.
+
+---
 
 ## Current Features
 
-Core engine:
+### Core Simulation
 
-- `PitchEngine`
-- `SwingDecisionEngine`
-- `ZoneJudge`
-- `SwingEngine`
-- `ContactEngine`
-- `AtBatEngine`
-- `BallPhysicsEngine`
-- `PlayResolutionEngine`
-- `GameEngine`
+| Engine | Engine | Engine |
+|---|---|---|
+| PitchEngine | SwingDecisionEngine | ZoneJudge |
+| SwingEngine | ContactEngine | AtBatEngine |
+| BallPhysicsEngine | PlayResolutionEngine | GameEngine |
 
-Visualization:
+### Pitching
 
-- SFML renderer
-- Pitch-by-pitch mode
-- Strike zone display
-- Pitch location display
-- Ball trajectory display
-- Line score
-- Box score
-- Player stats
+- Pitch-by-pitch simulation
+- Velocity, pitch movement, pitch quality
+- Release point support, pitch logs
+- Strike zone tracking
+- Count-aware decision making
 
-Simulation:
+### Hitting
 
-- League runner
-- Season runner
-- Team identities
-- Extra innings
-- Automatic runner
+- Swing decisions, chase logic
+- Contact quality, exit velocity
+- Launch angle, spray angle
+- Foul balls, swing and miss, in-play contact
 
-Metrics:
+### Batted Ball Physics
 
-- `AVG`
-- `OBP`
-- `SLG`
-- `OPS`
-- `K%`
-- `BB%`
-- `HR%`
-- `BABIP`
-- `R/G`
-- `XBT/G`
-- `TOH/G`
-- `SF%`
-- `H-OFA/G`
+- Fly balls, line drives, ground balls, popups, home runs
+- Fence interactions
+- Bounce trajectories, roll trajectories
+
+### Fielding
+
+- Catch probability, range calculations, error generation
+- Double plays, triple plays
+- Force plays, fielder's choice, infield fly rule
+
+### Runner Systems
+
+- Runner advancement, extra-base advancement
+- Tag-up support, sacrifice flies
+- Stolen bases, caught stealing, pickoffs
+- Wild pitches, passed balls, balks
+
+### Simulation
+
+- League Runner, Season Runner, Analysis Runner
+- Team identities, extra innings, automatic runners
+- Team statistics, player statistics
+
+### Visualization
+
+**Field View**
+- Diamond view, pitch animation, batted ball animation
+- Runner animation, throw animation
+- Line score, box score
+
+**Pitch View**
+- Large strike zone, pitch trajectory, pitch type display
+- Velocity display, zone display, result display
+- Pitch count display
+- Left/right-handed batter and pitcher support
+
+### Replay Foundation
+
+- AnimationPlan, AnimationPlanBuilder
+- ReplayTimeline, ReplayEvent
+- RunnerMovement, ThrowMovement, TagPlay
+
+### Fatigue & Form
+
+- Pitcher fatigue, daily form modifiers
+- Hot streak / cold streak support
+
+---
+
+## Metrics
+
+**League**
+
+| Metric | Metric | Metric |
+|--------|--------|--------|
+| AVG | OBP | SLG |
+| OPS | BABIP | K% |
+| BB% | HR% | R/G |
+
+**Runner**
+
+| Metric | Description |
+|--------|-------------|
+| XBT/G | Extra bases taken per game |
+| TOH/G | Thrown out at home per game |
+| SF% | Sacrifice fly success rate |
+| H-OFA/G | Hit outfield assists per game |
+
+**Internal**
+
+| Metric | Description |
+|--------|-------------|
+| OOB/G | Out on base per game |
+
+---
 
 ## Teams
 
-Official team names:
+| Team | Identity | Style |
+|------|----------|-------|
+| **Bronx Wolves** | Speed-first | Aggressive running · High XBT/G · Pressure offense |
+| **Harlem Eagles** | Contact and speed | High AVG · High OBP · Strong situational hitting |
+| **Brooklyn Hammers** | Power offense | High SLG · Home run production |
+| **Queens Titans** | Power and pitching | Run prevention · Extra-base power |
+| **Newark Knights** | Balanced roster | No extreme strengths · Consistent performance |
+| **Staten Island Foxes** | Rebuilding club | Lower overall ratings · Development-focused |
 
-- Bronx Wolves
-- Harlem Eagles
-- Brooklyn Hammers
-- Queens Titans
-- Newark Knights
-- Staten Island Foxes
+---
 
-Team identity targets:
-
-- Bronx Wolves: speed-based runner value
-- Harlem Eagles: contact and speed
-- Brooklyn Hammers: power
-- Queens Titans: power and pitching
-- Newark Knights: balanced
-- Staten Island Foxes: rebuilding team
-
-## Runner Metrics
-
-- `XBT/G`: Extra base taken per game. Measures aggressive advancement on hits.
-- `TOH/G`: Times out at home per game. Measures runners thrown out trying to score.
-- `SF%`: Sacrifice fly success rate.
-- `H-OFA/G`: Home outfield assists per game. Measures outfield throws that result in outs at home.
-- `OOB/G`: Outs on bases per game. Tracked internally but hidden in v1.0 because current runner outs are mostly home-plate outs.
-
-## Build And Run
-
-Build and run tests:
+## Build & Run
 
 ```bash
+# Run tests
 make -C app test
-```
 
-Build the main app target:
-
-```bash
+# Build all
 make -C app all
-```
 
-Run the league simulation:
+# Run SFML visualizer
+make -C app sfml-run
 
-```bash
+# Run League Simulation
 build/JojiLeagueRunner
-```
 
-Run the season simulation:
-
-```bash
+# Run Season Simulation
 build/JojiSeasonRunner
-```
 
-Build the analysis runner:
-
-```bash
+# Build & run Analysis Runner
 make -C app analysis
-```
-
-Run the default analysis mode:
-
-```bash
 make -C app analysis-run
-```
 
-Run a specific analysis mode:
-
-```bash
+# Analysis Runner modes
 build/JojiAnalysisRunner 100-games
 build/JojiAnalysisRunner 100-seasons
 build/JojiAnalysisRunner 1000-seasons
 ```
 
+---
+
 ## Roadmap
 
-### v1.1 Foundation & Analysis
+### v1.6 — Runner / Throw / Replay Foundation *(current)*
 
-- `README.md`
-- `CHANGELOG.md`
-- `ExportTypes.h`
-- `app/analysis_runner.cpp`
-- Makefile analysis target
+| Status | Feature |
+|--------|---------|
+| ✅ | ReplayTimeline, ReplayEvent |
+| ✅ | RunnerMovement, ThrowMovement, TagPlay |
+| ✅ | AnimationPlanBuilder integration |
+| 🔲 | Runner arrival timing |
+| 🔲 | Ball arrival timing |
+| 🔲 | Tag timing |
+| 🔲 | Replay-driven play reconstruction |
 
-Analysis runner outputs:
+### v1.7 — Defensive Decision Engine
 
-- League `AVG`, `OBP`, `SLG`, `OPS`
-- League `K%`, `BB%`, `HR%`, `R/G`
-- Team `W`, `L`, `RF/G`, `RA/G`
-- Team `AVG`, `OBP`, `SLG`, `OPS`
-- Team `XBT/G`, `TOH/G`, `SF%`, `H-OFA/G`
+Fielders choose optimal throws based on game context.
 
-### v1.2 SFML Animation Foundation
+- Throw home / first / second / third
+- Cutoff decisions, relay decisions, hold-ball decisions
 
-- `AnimationTypes.h`
-- `PitchAnimation`
-- `BattedBallAnimation`
-- `RunnerAnimation`
-- `AnimationPlan`
-- Pitch animation
-- Batted-ball trajectory replay
-- Runner animation
-- Animation snapshot types
+### v1.8 — Runner Physics
 
-### v1.3 Defensive Animation
+Runner movement becomes physics-driven.
 
-- Fielder routes
-- Catch and miss animation
-- Throw animation
-- Relay throw foundation
+- Acceleration, top speed, turn speed
+- Route efficiency, sliding
 
-### v1.4 Defensive Baserunning Expansion
+### v1.9 — Throw Physics
 
-- Runner outs at second and third
-- Relay plays
-- `OOB/G` re-enabled
-- `TOH/G` separated from broader outs-on-bases output
+Ball travel determines outcomes rather than predefined resolution.
 
-### v1.5 Team Identity Polish
+- Throw velocity, throw accuracy, throw arc
+- Bad throws, relay chains
 
-- Team strengths visible in standings
-- Team strengths visible in statistics
-- Team strengths visible in simulation output
+### v2.0 — Natural Baseball Simulation
 
-### v1.6 JSON Export
+Resolve baseball plays entirely through physics and decision-making systems.
 
-- `GameSnapshot`
-- `GameResultSnapshot`
-- `TeamSnapshot`
-- `PlayerSnapshot`
-- Single-game, season, and league export formats
+| System | System | System |
+|--------|--------|--------|
+| Pitch Physics | Swing Physics | Ball-Bat Collision Physics |
+| Contact Physics | Batted Ball Physics | Bounce Physics |
+| Wall Physics | Fielder Movement Physics | Catch Physics |
+| Throw Physics | Runner Physics | Defensive Decision Engine |
+| Baserunning Decision Engine | Replay Engine | |
 
-### v1.7 Java API
+### Post v2.0
 
-- Spring Boot API
-- Game, team, player, standings, and season endpoints
+**Simulation**
+- Manager AI, Injury Engine, Advanced fatigue, Player development
 
-### v1.8 React / JojiStats Integration
+**Environment**
+- Weather Engine, Expanded Stadium Engine
 
-- Live game viewer
-- Pitch-by-pitch replay
-- Ball trajectory replay
-- Box score
-- Line score
-- Team pages
-- Player pages
-- Season simulator
+**Analytics**
+- Advanced Statcast, Heat maps, Pitch usage analysis
+
+**Platform**
+- JSON Export, Java API, React Integration
+- JojiStats Integration, Live Game Viewer, Replay Viewer

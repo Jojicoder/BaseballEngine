@@ -1,12 +1,14 @@
 #include "AtBatEngine.h"
 #include "AnimationPlanBuilder.h"
 #include "BallPhysicsEngine.h"
+#include "JsonExporter.h"
 #include "PlayResolutionEngine.h"
 
 #include <cassert>
 #include <cstdint>
 #include <iostream>
 #include <optional>
+#include <string>
 
 namespace {
 
@@ -80,6 +82,53 @@ void testBallPhysicsAndResolution() {
            resolution.type == joji::PlayOutcomeType::Foul);
 }
 
+void testFieldingPhysicsBoundaries() {
+    joji::PlayResolutionEngine resolver;
+    joji::GameState state;
+
+    joji::BattedBall deepGrounder;
+    deepGrounder.exitVelocity = 105.0;
+    deepGrounder.launchAngle = -2.0;
+    deepGrounder.sprayAngle = 0.0;
+    deepGrounder.estimatedDistance = 245.0;
+    deepGrounder.hangTime = 0.18;
+    deepGrounder.maxHeight = 2.0;
+    deepGrounder.landsFair = true;
+    deepGrounder.classification = "hard ground ball";
+    deepGrounder.landingPoint = {0.0, 38.0, 0.0};
+    deepGrounder.finalRestPoint = {0.0, 245.0, 0.0};
+    deepGrounder.groundRollDistance = 207.0;
+    for (int y = 38; y <= 245; y += 12) {
+        deepGrounder.bounceTrajectory.push_back({0.0, static_cast<double>(y), 0.0});
+    }
+
+    joji::Random groundRandom{std::optional<std::uint32_t>{123}};
+    const joji::PlayResolution ground = resolver.resolve(deepGrounder, state, groundRandom);
+    assert(ground.fielderId != 0); // pitcher should not chase deep grounders into the outfield
+    if (ground.fielderId >= 0 && ground.fieldingOutcome == joji::FieldingOutcomeType::FieldedCleanly) {
+        assert(ground.fieldingPoint.y <= 175.0);
+    }
+
+    joji::BattedBall foulFly;
+    foulFly.exitVelocity = 86.0;
+    foulFly.launchAngle = 52.0;
+    foulFly.sprayAngle = -48.0;
+    foulFly.estimatedDistance = 92.0;
+    foulFly.hangTime = 3.1;
+    foulFly.maxHeight = 78.0;
+    foulFly.landsFair = false;
+    foulFly.classification = "pop fly";
+    foulFly.landingPoint = {-86.0, 34.0, 0.0};
+    foulFly.finalRestPoint = foulFly.landingPoint;
+    foulFly.trajectory = {{0.0, 0.0, 1.0}, {-42.0, 17.0, 62.0}, foulFly.landingPoint};
+
+    joji::Random foulRandom{std::optional<std::uint32_t>{456}};
+    const joji::PlayResolution foul = resolver.resolve(foulFly, state, foulRandom);
+    assert(foul.type == joji::PlayOutcomeType::Out);
+    assert(foul.fieldingOutcome == joji::FieldingOutcomeType::Caught);
+    assert(foul.fielderId >= 0);
+}
+
 void testAnimationPlanBuilder() {
     joji::AtBatResult atBat;
     atBat.batter = createBatter();
@@ -128,6 +177,47 @@ void testAnimationPlanBuilder() {
     assert(plan.runners.empty());
     assert(plan.totalDurationSeconds >= plan.pitch.durationSeconds);
     assert(plan.totalDurationSeconds >= plan.battedBall.durationSeconds);
+    assert(!plan.replayTimeline.events.empty());
+    bool hasPitchEvent = false;
+    bool hasContactEvent = false;
+    bool hasBallFlightEvent = false;
+    bool hasFieldEvent = false;
+    bool hasResultEvent = false;
+    for (const auto& event : plan.replayTimeline.events) {
+        hasPitchEvent = hasPitchEvent || event.type == joji::ReplayEventType::Pitch;
+        hasContactEvent = hasContactEvent || event.type == joji::ReplayEventType::Contact;
+        hasBallFlightEvent = hasBallFlightEvent || event.type == joji::ReplayEventType::BallFlight;
+        hasFieldEvent = hasFieldEvent || event.type == joji::ReplayEventType::Field;
+        hasResultEvent = hasResultEvent || event.type == joji::ReplayEventType::Result;
+        assert(event.timeSeconds >= 0.0);
+    }
+    assert(hasPitchEvent);
+    assert(hasContactEvent);
+    assert(hasBallFlightEvent);
+    assert(hasFieldEvent);
+    assert(hasResultEvent);
+
+    const joji::ReplayCursor startCursor =
+        joji::cursorForReplayTimeline(plan.replayTimeline, 0.0);
+    assert(startCursor.activeEventIndex.has_value() || startCursor.nextEventIndex.has_value());
+    assert(startCursor.phase == joji::ReplayPhase::Pitch);
+
+    const joji::ReplayCursor endCursor =
+        joji::cursorForReplayTimeline(plan.replayTimeline, plan.totalDurationSeconds + 1.0);
+    assert(endCursor.activeEventIndex.has_value());
+    assert(endCursor.phase == joji::ReplayPhase::Result);
+
+    const std::string json = joji::exportAnimationPlanToJson(plan);
+    assert(json.find("\"schemaName\": \"joji.replay.timeline\"") != std::string::npos);
+    assert(json.find("\"pitch\"") != std::string::npos);
+    assert(json.find("\"battedBall\"") != std::string::npos);
+    assert(json.find("\"runners\"") != std::string::npos);
+    assert(json.find("\"defenders\"") != std::string::npos);
+    assert(json.find("\"throws\"") != std::string::npos);
+    assert(json.find("\"runnerMovements\"") != std::string::npos);
+    assert(json.find("\"throwMovements\"") != std::string::npos);
+    assert(json.find("\"tagPlays\"") != std::string::npos);
+    assert(json.find("\"defensiveDecision\"") != std::string::npos);
 }
 
 } // namespace
@@ -136,6 +226,7 @@ int main() {
     testCountRules();
     testAtBatTerminates();
     testBallPhysicsAndResolution();
+    testFieldingPhysicsBoundaries();
     testAnimationPlanBuilder();
 
     std::cout << "engine_tests: ok\n";

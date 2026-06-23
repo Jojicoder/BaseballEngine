@@ -1,8 +1,24 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace joji {
+
+// Moved here from AtBatTypes.h so Player can reference it without circular includes.
+enum class PitchType {
+    Fastball,
+    Slider,
+    Curveball,
+    Changeup,
+    Cutter,
+    Splitter
+};
+
+struct PitchGrade {
+    PitchType type;
+    int grade = 50; // scout scale 40–80
+};
 
 enum class PitcherRole {
     Starter,
@@ -45,6 +61,30 @@ enum class Position {
     RightField
 };
 
+// Player role — primary function for roster construction and trade valuation.
+enum class PlayerRole {
+    Leadoff,        // contact/eye/speed 特化
+    ContactHitter,  // 安打製造機
+    PowerHitter,    // クリーンアップ power 特化
+    CornerIF,       // 1B/3B  power+fielding
+    MiddleIF,       // 2B/SS  fielding/arm+speed
+    CenterFielder,  // speed+fielding 特化
+    CornerOF,       // LF/RF  power or speed
+    Catcher,        // arm+fielding 特化
+    UtilityIF,      // 複数ポジション、代走/守備交代
+    ExtraOF,        // 4th OF
+    PinchHitter,    // contact/eye 高め、fielding 低め
+    BackupCatcher,
+    Ace,
+    Starter,        // #2-#3
+    BackOfRotation, // #4-#5
+    Closer,
+    Setup,
+    MiddleRelief,
+    LongRelief,
+    Specialist,     // 対左/右専門
+};
+
 struct Player {
     std::string name;
     Position    position        = Position::CenterField;
@@ -61,6 +101,18 @@ struct Player {
     PitcherRole pitcherRole = PitcherRole::Starter;
     ThrowingHand throwingHand = ThrowingHand::Right;
     BattingSide battingSide = BattingSide::Right;
+
+    // Pitcher arsenal: which pitch types and how good each one is.
+    std::vector<PitchGrade> arsenal;
+
+    // Batter tendencies
+    int pullTendency       = 50; // >50 = pull hitter, <50 = opposite field
+    int highBallHitter     = 50; // >50 = strong on high pitches
+    int chaseRate          = 50; // >50 = chases off-zone pitches more
+    int contactVsBreaking  = 50; // >50 = handles breaking balls well
+
+    // Roster role — set after construction via withRole(); used for trade valuation
+    PlayerRole role = PlayerRole::ContactHitter;
 };
 
 } // namespace joji

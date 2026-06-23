@@ -1,9 +1,11 @@
 #include "GameEngine.h"
+#include "JsonExporter.h"
 #include "Teams.h"
 
 #include <algorithm>
 #include <cstdlib>
 #include <cstdint>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <optional>
@@ -39,10 +41,25 @@ struct TeamAnalysis {
     int sacFlies = 0;
 
     int extraBasesTaken = 0;
+    int runnerOutsOnBases = 0;
     int thrownOutAtHome = 0;
     int sacFlyAttempts = 0;
     int sacFlySuccesses = 0;
     int homeOutfieldAssists = 0;
+    int errors = 0;
+    int badThrows = 0;
+    int throwingErrors = 0;
+    int stolenBaseAttempts = 0;
+    int stolenBases = 0;
+    int caughtStealing = 0;
+    int wildPitches = 0;
+    int passedBalls = 0;
+    int balks = 0;
+    int pickoffAttempts = 0;
+    int pickoffOuts = 0;
+    int buntAttempts = 0;
+    int buntSuccesses = 0;
+    int infieldFlies = 0;
 
     int plateAppearances() const { return atBats + walks + sacFlies; }
     double avg() const { return atBats > 0 ? static_cast<double>(hits) / atBats : 0.0; }
@@ -67,9 +84,24 @@ struct TeamAnalysis {
     double runsPerGame() const { return games > 0 ? static_cast<double>(runsFor) / games : 0.0; }
     double runsAllowedPerGame() const { return games > 0 ? static_cast<double>(runsAgainst) / games : 0.0; }
     double xbtPerGame() const { return games > 0 ? static_cast<double>(extraBasesTaken) / games : 0.0; }
+    double oobPerGame() const { return games > 0 ? static_cast<double>(runnerOutsOnBases) / games : 0.0; }
     double tohPerGame() const { return games > 0 ? static_cast<double>(thrownOutAtHome) / games : 0.0; }
     double sfPct() const { return sacFlyAttempts > 0 ? sacFlySuccesses * 100.0 / sacFlyAttempts : 0.0; }
     double hOfaPerGame() const { return games > 0 ? static_cast<double>(homeOutfieldAssists) / games : 0.0; }
+    double errorsPerGame() const { return games > 0 ? static_cast<double>(errors) / games : 0.0; }
+    double badThrowsPerGame() const { return games > 0 ? static_cast<double>(badThrows) / games : 0.0; }
+    double throwingErrorsPerGame() const { return games > 0 ? static_cast<double>(throwingErrors) / games : 0.0; }
+    double sbAttemptPerGame() const { return games > 0 ? static_cast<double>(stolenBaseAttempts) / games : 0.0; }
+    double sbPct() const { return stolenBaseAttempts > 0 ? stolenBases * 100.0 / stolenBaseAttempts : 0.0; }
+    double csPerGame() const { return games > 0 ? static_cast<double>(caughtStealing) / games : 0.0; }
+    double wpPerGame() const { return games > 0 ? static_cast<double>(wildPitches) / games : 0.0; }
+    double pbPerGame() const { return games > 0 ? static_cast<double>(passedBalls) / games : 0.0; }
+    double balkPerGame() const { return games > 0 ? static_cast<double>(balks) / games : 0.0; }
+    double pickoffAttemptPerGame() const { return games > 0 ? static_cast<double>(pickoffAttempts) / games : 0.0; }
+    double pickoffOutPerGame() const { return games > 0 ? static_cast<double>(pickoffOuts) / games : 0.0; }
+    double buntAttemptPerGame() const { return games > 0 ? static_cast<double>(buntAttempts) / games : 0.0; }
+    double buntSuccessPct() const { return buntAttempts > 0 ? buntSuccesses * 100.0 / buntAttempts : 0.0; }
+    double iffPerGame() const { return games > 0 ? static_cast<double>(infieldFlies) / games : 0.0; }
 };
 
 AnalysisMode parseMode(int argc, char* argv[]) {
@@ -98,9 +130,24 @@ void accumulateOffense(TeamAnalysis& team, const joji::TeamBoxScore& box) {
     team.totalBases += box.totalBases;
     team.sacFlies += box.sacFlySuccesses;
     team.extraBasesTaken += box.extraBasesTaken;
+    team.runnerOutsOnBases += box.runnerOutsOnBases;
     team.thrownOutAtHome += box.runnersThrownOutAtHome;
     team.sacFlyAttempts += box.sacFlyAttempts;
     team.sacFlySuccesses += box.sacFlySuccesses;
+    team.errors += box.errors;
+    team.badThrows += box.badThrows;
+    team.throwingErrors += box.throwingErrors;
+    team.stolenBaseAttempts += box.stolenBaseAttempts;
+    team.stolenBases += box.stolenBases;
+    team.caughtStealing += box.caughtStealing;
+    team.wildPitches += box.wildPitches;
+    team.passedBalls += box.passedBalls;
+    team.balks += box.balks;
+    team.pickoffAttempts += box.pickoffAttempts;
+    team.pickoffOuts += box.pickoffOuts;
+    team.buntAttempts += box.buntAttempts;
+    team.buntSuccesses += box.buntSuccesses;
+    team.infieldFlies += box.infieldFlies;
 }
 
 void accumulateDefense(TeamAnalysis& team, const std::vector<joji::PlayerBoxScore>& players) {
@@ -212,10 +259,25 @@ TeamAnalysis leagueTotals(const std::vector<TeamAnalysis>& teams) {
         total.totalBases += team.totalBases;
         total.sacFlies += team.sacFlies;
         total.extraBasesTaken += team.extraBasesTaken;
+        total.runnerOutsOnBases += team.runnerOutsOnBases;
         total.thrownOutAtHome += team.thrownOutAtHome;
         total.sacFlyAttempts += team.sacFlyAttempts;
         total.sacFlySuccesses += team.sacFlySuccesses;
         total.homeOutfieldAssists += team.homeOutfieldAssists;
+        total.errors += team.errors;
+        total.badThrows += team.badThrows;
+        total.throwingErrors += team.throwingErrors;
+        total.stolenBaseAttempts += team.stolenBaseAttempts;
+        total.stolenBases += team.stolenBases;
+        total.caughtStealing += team.caughtStealing;
+        total.wildPitches += team.wildPitches;
+        total.passedBalls += team.passedBalls;
+        total.balks += team.balks;
+        total.pickoffAttempts += team.pickoffAttempts;
+        total.pickoffOuts += team.pickoffOuts;
+        total.buntAttempts += team.buntAttempts;
+        total.buntSuccesses += team.buntSuccesses;
+        total.infieldFlies += team.infieldFlies;
     }
     return total;
 }
@@ -260,10 +322,11 @@ void printTeamIdentity(std::vector<TeamAnalysis> teams) {
               << std::setw(7) << "SLG"
               << std::setw(7) << "OPS"
               << std::setw(7) << "XBT/G"
+              << std::setw(7) << "OOB/G"
               << std::setw(7) << "TOH/G"
               << std::setw(7) << "SF%"
               << std::setw(8) << "H-OFA/G"
-              << "\n" << std::string(101, '-') << "\n";
+              << "\n" << std::string(108, '-') << "\n";
 
     for (const auto& team : teams) {
         std::cout << std::left << std::setw(22) << team.name
@@ -276,6 +339,7 @@ void printTeamIdentity(std::vector<TeamAnalysis> teams) {
                   << std::setw(7) << fixed(team.slg(), 3)
                   << std::setw(7) << fixed(team.ops(), 3)
                   << std::setw(7) << fixed(team.xbtPerGame(), 2)
+                  << std::setw(7) << fixed(team.oobPerGame(), 3)
                   << std::setw(7) << fixed(team.tohPerGame(), 3)
                   << std::setw(7) << (fixed(team.sfPct(), 1) + "%")
                   << std::setw(8) << fixed(team.hOfaPerGame(), 3)
@@ -283,9 +347,177 @@ void printTeamIdentity(std::vector<TeamAnalysis> teams) {
     }
 }
 
+void printCalibration(const TeamAnalysis& league) {
+    std::cout << "\n=== Calibration Metrics ===\n";
+    std::cout << std::left << std::setw(9) << "E/G"
+              << std::setw(9) << "BadTh/G"
+              << std::setw(9) << "ThE/G"
+              << std::setw(9) << "SBA/G"
+              << std::setw(9) << "SB%"
+              << std::setw(9) << "CS/G"
+              << std::setw(9) << "WP/G"
+              << std::setw(9) << "PB/G"
+              << std::setw(9) << "Balk/G"
+              << std::setw(9) << "POA/G"
+              << std::setw(9) << "PO/G"
+              << std::setw(9) << "Bunt/G"
+              << std::setw(9) << "Bunt%"
+              << std::setw(9) << "IFF/G"
+              << "\n" << std::string(126, '-') << "\n";
+    std::cout << std::left << std::setw(9) << fixed(league.errorsPerGame(), 2)
+              << std::setw(9) << fixed(league.badThrowsPerGame(), 2)
+              << std::setw(9) << fixed(league.throwingErrorsPerGame(), 2)
+              << std::setw(9) << fixed(league.sbAttemptPerGame(), 3)
+              << std::setw(9) << (fixed(league.sbPct(), 1) + "%")
+              << std::setw(9) << fixed(league.csPerGame(), 3)
+              << std::setw(9) << fixed(league.wpPerGame(), 3)
+              << std::setw(9) << fixed(league.pbPerGame(), 3)
+              << std::setw(9) << fixed(league.balkPerGame(), 3)
+              << std::setw(9) << fixed(league.pickoffAttemptPerGame(), 3)
+              << std::setw(9) << fixed(league.pickoffOutPerGame(), 3)
+              << std::setw(9) << fixed(league.buntAttemptPerGame(), 3)
+              << std::setw(9) << (fixed(league.buntSuccessPct(), 1) + "%")
+              << std::setw(9) << fixed(league.iffPerGame(), 3)
+              << "\n";
+}
+
+std::string resultTypeLabel(joji::AtBatResultType type) {
+    switch (type) {
+        case joji::AtBatResultType::StrikeOut:         return "StrikeOut";
+        case joji::AtBatResultType::Walk:              return "Walk";
+        case joji::AtBatResultType::HitByPitch:        return "HitByPitch";
+        case joji::AtBatResultType::Single:            return "Single";
+        case joji::AtBatResultType::Double:            return "Double";
+        case joji::AtBatResultType::Triple:            return "Triple";
+        case joji::AtBatResultType::HomeRun:           return "HomeRun";
+        case joji::AtBatResultType::GroundOut:         return "GroundOut";
+        case joji::AtBatResultType::FlyOut:            return "FlyOut";
+        case joji::AtBatResultType::Error:             return "Error";
+        case joji::AtBatResultType::FielderChoice:     return "FielderChoice";
+        case joji::AtBatResultType::InfieldFly:        return "InfieldFly";
+        case joji::AtBatResultType::SacrificeBunt:     return "SacrificeBunt";
+        case joji::AtBatResultType::BuntSingle:        return "BuntSingle";
+        case joji::AtBatResultType::SqueezeBunt:       return "SqueezeBunt";
+        case joji::AtBatResultType::BuntFielderChoice: return "BuntFielderChoice";
+    }
+    return "Unknown";
+}
+
+bool replayPlanMatches(const joji::AnimationPlan& plan,
+                       const std::string& filter) {
+    if (filter == "any") {
+        return !plan.replayTimeline.events.empty();
+    }
+    if (filter == "batted") {
+        return plan.hasBattedBall;
+    }
+    if (filter == "throw") {
+        return !plan.throws.empty() || !plan.throwMovements.empty();
+    }
+    if (filter == "runner") {
+        return !plan.runners.empty() || !plan.runnerMovements.empty();
+    }
+    if (filter == "tag") {
+        return !plan.tagPlays.empty();
+    }
+    if (filter == "defense") {
+        return !plan.defenders.empty();
+    }
+    return false;
+}
+
+int runReplayExportMode(int argc, char* argv[]) {
+    const std::string outputPath = argc >= 3 ? argv[2] : "../build/replay_debug.json";
+    const std::string filter = argc >= 4 ? argv[3] : "throw";
+    const int maxPitches = argc >= 5 ? std::max(1, std::atoi(argv[4])) : 5000;
+    if (filter != "any"
+        && filter != "batted"
+        && filter != "throw"
+        && filter != "runner"
+        && filter != "tag"
+        && filter != "defense") {
+        std::cerr << "Unknown replay-export filter: " << filter << "\n"
+                  << "Usage: JojiAnalysisRunner replay-export [path] "
+                  << "[any|batted|throw|runner|tag|defense] [max-pitches]\n";
+        return 2;
+    }
+
+    const auto teams = joji::allTeams();
+    joji::GameEngine engine{
+        teams.at(0),
+        teams.at(1),
+        joji::Random{std::optional<std::uint32_t>{424242u}}
+    };
+
+    int pitchCount = 0;
+    std::optional<joji::PlayResult> matchedPlay;
+    std::optional<joji::AnimationPlan> matchedPlan;
+
+    while (!engine.isComplete() && pitchCount < maxPitches) {
+        engine.simulateNextPitch();
+        ++pitchCount;
+
+        if (engine.latestAnimationPlan().has_value()
+            && replayPlanMatches(*engine.latestAnimationPlan(), filter)) {
+            matchedPlan = engine.latestAnimationPlan();
+            break;
+        }
+
+        if (engine.hasPendingAtBatResult()) {
+            auto play = engine.applyPendingAtBatResult();
+            if (engine.latestAnimationPlan().has_value()
+                && replayPlanMatches(*engine.latestAnimationPlan(), filter)) {
+                matchedPlay = play;
+                matchedPlan = engine.latestAnimationPlan();
+                break;
+            }
+        }
+    }
+
+    if (!matchedPlan.has_value()) {
+        std::cerr << "No replay sample matched filter '" << filter
+                  << "' within " << maxPitches << " pitches.\n";
+        return 1;
+    }
+
+    std::ofstream out(outputPath);
+    if (!out) {
+        std::cerr << "Could not write replay JSON: " << outputPath << "\n";
+        return 1;
+    }
+    out << joji::exportAnimationPlanToJson(*matchedPlan);
+
+    std::cout << "Replay export written: " << outputPath << "\n";
+    std::cout << "Filter: " << filter
+              << "  pitchesScanned: " << pitchCount
+              << "  duration: " << fixed(matchedPlan->totalDurationSeconds, 2)
+              << "s"
+              << "  events: " << matchedPlan->replayTimeline.events.size()
+              << "  runners: " << matchedPlan->runners.size()
+              << "  throws: " << matchedPlan->throws.size()
+              << "  tags: " << matchedPlan->tagPlays.size()
+              << "\n";
+    if (matchedPlay.has_value()) {
+        std::cout << "Play: " << matchedPlay->batterName
+                  << " " << resultTypeLabel(matchedPlay->type);
+        if (!matchedPlay->events.empty()) {
+            std::cout << "  " << matchedPlay->events.front();
+        }
+        std::cout << "\n";
+    } else {
+        std::cout << "Play: inter-pitch event\n";
+    }
+
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
+    if (argc >= 2 && std::string(argv[1]) == "replay-export") {
+        return runReplayExportMode(argc, argv);
+    }
+
     const AnalysisMode mode = parseMode(argc, argv);
     const auto teams = joji::allTeams();
 
@@ -307,8 +539,10 @@ int main(int argc, char* argv[]) {
         runSeasonsMode(teams, analysis, mode.seasons, seed);
     }
 
-    printLeagueAverages(leagueTotals(analysis));
+    const TeamAnalysis league = leagueTotals(analysis);
+    printLeagueAverages(league);
     printTeamIdentity(analysis);
+    printCalibration(league);
 
     return 0;
 }

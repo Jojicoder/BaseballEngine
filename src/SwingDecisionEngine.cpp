@@ -21,8 +21,9 @@ bool nearStrikeZone(const Pitch& pitch) {
 } // namespace
 
 SwingDecision SwingDecisionEngine::decide(const Player& batter, const Pitch& pitch, const Count& count, ThrowingHand pitcherHand, Random& random) const {
-    const double eye = clamp((batter.eye - 50) / 50.0, -0.8, 0.8);
-    const double contact = clamp((batter.contact - 50) / 50.0, -0.8, 0.8);
+    const double eye      = clamp((batter.eye       - 50) / 50.0, -0.8, 0.8);
+    const double contact  = clamp((batter.contact   - 50) / 50.0, -0.8, 0.8);
+    const double chaseAdj = clamp((batter.chaseRate - 50) / 50.0, -0.6, 0.6);
     const bool zone = inStrikeZone(pitch);
     const bool chase = !zone && nearStrikeZone(pitch);
 
@@ -39,6 +40,8 @@ SwingDecision SwingDecisionEngine::decide(const Player& batter, const Pitch& pit
     probability -= count.balls >= 3 ? (zone ? 0.16 : 0.42) : 0.0;
     probability += pitch.pitchQuality > 0.72 ? -0.06 : 0.0;
     if (chase) probability += handednessChase;
+    // chaseRate: high = swings more at off-zone, low = lays off
+    if (!zone) probability += chaseAdj * 0.12;
     probability = clamp(probability, 0.03, 0.88);
 
     SwingDecision decision;

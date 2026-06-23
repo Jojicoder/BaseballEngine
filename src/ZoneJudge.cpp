@@ -9,8 +9,10 @@ ZoneResult ZoneJudge::judge(const Pitch& pitch) const {
     result.locationX = pitch.locationX;
     result.locationZ = pitch.locationZ;
 
-    const bool insideWidth = std::abs(pitch.locationX) <= 0.83;
-    const bool insideHeight = pitch.locationZ >= 1.55 && pitch.locationZ <= 3.50;
+    const double xLimit  = 0.73 + ump_.horizBias;
+    const double zHigh   = 3.50 + ump_.vertBias;
+    const bool insideWidth  = std::abs(pitch.locationX) <= xLimit;
+    const bool insideHeight = pitch.locationZ >= 1.55 && pitch.locationZ <= zHigh;
     result.result = insideWidth && insideHeight ? ZoneResultType::CalledStrike : ZoneResultType::Ball;
     return result;
 }

@@ -20,14 +20,7 @@ Count afterBall(Count count);
 Count afterStrike(Count count);
 Count afterFoul(Count count);
 
-enum class PitchType {
-    Fastball,
-    Slider,
-    Curveball,
-    Changeup,
-    Cutter,
-    Splitter
-};
+// PitchType is defined in Player.h (included above).
 
 struct Pitch {
     PitchType pitchType = PitchType::Fastball;
@@ -37,6 +30,14 @@ struct Pitch {
     double movementX = 0.0;
     double movementZ = 0.0;
     double spinRate = 0.0;
+    // 3D spin axis (unit vector).  Pitch travels in -y direction.
+    // Magnus.x = axisZ, Magnus.z = -axisX  →  axisX<0 = up, axisZ>0 = arm-side (RHP)
+    double spinAxisX = -1.0;
+    double spinAxisY =  0.0;
+    double spinAxisZ =  0.0;
+    // Fraction of spin that creates Magnus force (vs. gyro/seam-shift wake).
+    // 1.0 = pure backspin; lower values enable SSW lateral force.
+    double activeSpin = 0.95;
     double pitchQuality = 0.0;
 };
 
@@ -70,6 +71,10 @@ struct Swing {
     double contactIntent = 0.0;
     double batSpeed = 0.0;
     double swingQuality = 0.0;
+    // 3D bat path: horizontal swing plane angle (degrees).
+    // Positive = bat head moves toward pull side at contact (pull swing).
+    // Negative = bat head moves toward oppo side (inside-out swing).
+    double swingPlaneAngle = 0.0;
 };
 
 enum class ContactResultType {
@@ -164,6 +169,7 @@ struct AtBatState {
     std::optional<AtBatOutcome> finalOutcome;
     std::optional<BattedBallInput> battedBallInput;
     bool buntIntent = false; // バント意図: GameEngine が状況に応じて設定
+    std::optional<Pitch> lastPitch; // 前球（配球スコアリング用）
 };
 
 std::string toString(PitchType type);

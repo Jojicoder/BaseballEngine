@@ -28,6 +28,24 @@ struct BallConfig {
     double radius = 0.037;
     double dragCoefficient = 0.40;
     double airDensity = 1.225;
+    double windX = 0.0;  // m/s, positive = toward RF (+x field direction)
+    double windY = 0.0;  // m/s, positive = toward CF (+y field direction)
+};
+
+// Standard atmosphere: density from altitude (ft) and temperature (°F)
+double computeAirDensity(double altitudeFeet, double temperatureFahrenheit) {
+    const double altMeters = altitudeFeet * 0.3048;
+    const double tempKelvin = (temperatureFahrenheit - 32.0) * 5.0 / 9.0 + 273.15;
+    const double pressurePa = 101325.0 * std::pow(1.0 - 2.2558e-5 * altMeters, 5.2559);
+    return pressurePa / (287.05 * tempKelvin);
+}
+
+// 3D spin state: unit axis vector + spin rate (rpm)
+struct SpinState {
+    double axisX = 1.0;  // unit vector components
+    double axisY = 0.0;
+    double axisZ = 0.0;
+    double rateRpm = 1800.0;
 };
 
 double clamp(double value, double min, double max) {
@@ -131,6 +149,47 @@ double length2d(const Vector3& value) {
     return std::sqrt(value.x * value.x + value.y * value.y);
 }
 
+Vector3 cross(const Vector3& a, const Vector3& b) {
+    return {
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
+    };
+}
+
+// Build a SpinState for a batted ball from legacy backSpin / sideSpin scalars.
+// backSpin (rpm): vertical component — backspin creates lift, topspin adds drop.
+// sideSpin (dimensionless, ±7.5 range): lateral component — scaled to ~70 rpm/unit
+//   so that peak sidespin ≈ ±525 rpm matches the original ad-hoc force magnitude.
+SpinState spinStateForBattedBall(double backSpinRpm, double sideSpin, double sprayAngleDeg) {
+    const double sprayRad = sprayAngleDeg * Pi / 180.0;
+    const double cosS     = std::cos(sprayRad);
+    const double sinS     = std::sin(sprayRad);
+    // 70 rpm per unit matches the legacy 2.0 * sideSpin lateral acceleration at typical speed
+    const double sideRpm  = sideSpin * 70.0;
+    const double total    = std::sqrt(backSpinRpm * backSpinRpm + sideRpm * sideRpm);
+
+    SpinState spin;
+    spin.rateRpm = total > 0.01 ? total : std::abs(backSpinRpm);
+    if (total > 0.01) {
+        // Backspin axis: perpendicular to flight direction in the horizontal plane.
+        // For ball traveling in direction (sinS, cosS, 0), backspin creates upward lift
+        // when axis = (cosS, -sinS, 0).  (Verified: cross((cosS,-sinS,0),(sinS,cosS,0)) = (0,0,1))
+        const double bf = backSpinRpm / total;
+        const double sf = sideRpm     / total;
+        spin.axisX = cosS * bf;
+        spin.axisY = -sinS * bf;
+        // Positive sideSpin → breaks toward positive x (RF side for positive spray).
+        // Need axisZ < 0 so that cross((0,0,axisZ),(0,1,0)) gives (+x,0,0).
+        spin.axisZ = -sf;
+    } else {
+        spin.axisX = cosS;
+        spin.axisY = -sinS;
+        spin.axisZ = 0.0;
+    }
+    return spin;
+}
+
 PhysicsState add(const PhysicsState& left, const PhysicsState& right) {
     return {add(left.position, right.position), add(left.velocity, right.velocity)};
 }
@@ -152,6 +211,7 @@ bool shouldLandFair(AtBatResultType result) {
             return true;
         case AtBatResultType::StrikeOut:
         case AtBatResultType::Walk:
+        case AtBatResultType::HitByPitch:
         case AtBatResultType::GroundOut:
         case AtBatResultType::FlyOut:
         case AtBatResultType::Error:
@@ -166,42 +226,53 @@ bool shouldLandFair(AtBatResultType result) {
     return false;
 }
 
-PhysicsState derivative(const PhysicsState& state, const BallConfig& config, double backSpinRpm, double sideSpin) {
+// Magnus force direction: spinAxis × v_hat (cross product).
+// Magnitude: Cl(rateRpm) * rho * A / (2m) * speed²
+// Cl = 0.23 * (rateRpm / 2000) — calibrated to match Statcast lift data.
+PhysicsState derivative(const PhysicsState& state, const BallConfig& config, const SpinState& spin) {
     const double area = Pi * config.radius * config.radius;
     const double drag = 0.5 * config.airDensity * config.dragCoefficient * area / config.mass;
-    const double liftCoefficient = 0.23 * (backSpinRpm / 2000.0);
-    const double lift = 0.5 * config.airDensity * liftCoefficient * area / config.mass;
+    const double cl   = 0.23 * (spin.rateRpm / 2000.0);
+    const double magnusCoeff = 0.5 * config.airDensity * cl * area / config.mass;
 
     const double speed = length(state.velocity);
-    const double horizontalSpeed = std::sqrt(state.velocity.x * state.velocity.x + state.velocity.y * state.velocity.y);
 
     Vector3 acceleration = {0.0, 0.0, -Gravity};
 
-    if (speed > 0.01) {
-        acceleration.x -= drag * speed * state.velocity.x;
-        acceleration.y -= drag * speed * state.velocity.y;
-        acceleration.z -= drag * speed * state.velocity.z;
+    // Relative velocity of ball vs wind (drag acts on airflow over ball)
+    const double relVx = state.velocity.x - config.windX;
+    const double relVy = state.velocity.y - config.windY;
+    const double relVz = state.velocity.z;
+    const double relSpeed = std::sqrt(relVx*relVx + relVy*relVy + relVz*relVz);
+
+    if (relSpeed > 0.01) {
+        // Drag acts along relative velocity direction
+        acceleration.x -= drag * relSpeed * relVx;
+        acceleration.y -= drag * relSpeed * relVy;
+        acceleration.z -= drag * relSpeed * relVz;
     }
 
-    if (horizontalSpeed > 0.01) {
-        const double liftAcceleration = lift * speed;
-        acceleration.x += -liftAcceleration * state.velocity.x * state.velocity.z / horizontalSpeed;
-        acceleration.y += -liftAcceleration * state.velocity.y * state.velocity.z / horizontalSpeed;
-        acceleration.z += liftAcceleration * horizontalSpeed;
-
-        const double sideAcceleration = 2.0 * sideSpin;
-        acceleration.x += sideAcceleration * state.velocity.y / horizontalSpeed;
-        acceleration.y += -sideAcceleration * state.velocity.x / horizontalSpeed;
+    if (speed > 0.01) {
+        // Magnus: a = magnusCoeff * speed² * (spinAxis × v_hat) — uses absolute velocity
+        const Vector3 vHat = {state.velocity.x / speed,
+                              state.velocity.y / speed,
+                              state.velocity.z / speed};
+        const Vector3 spinAxis = {spin.axisX, spin.axisY, spin.axisZ};
+        const Vector3 magnusDir = cross(spinAxis, vHat);
+        const double  magnusMag = magnusCoeff * speed * speed;
+        acceleration.x += magnusDir.x * magnusMag;
+        acceleration.y += magnusDir.y * magnusMag;
+        acceleration.z += magnusDir.z * magnusMag;
     }
 
     return {state.velocity, acceleration};
 }
 
-PhysicsState rk4Step(const PhysicsState& state, const BallConfig& config, double backSpinRpm, double sideSpin) {
-    PhysicsState k1 = derivative(state, config, backSpinRpm, sideSpin);
-    PhysicsState k2 = derivative(add(state, multiply(k1, TimeStep / 2.0)), config, backSpinRpm, sideSpin);
-    PhysicsState k3 = derivative(add(state, multiply(k2, TimeStep / 2.0)), config, backSpinRpm, sideSpin);
-    PhysicsState k4 = derivative(add(state, multiply(k3, TimeStep)), config, backSpinRpm, sideSpin);
+PhysicsState rk4Step(const PhysicsState& state, const BallConfig& config, const SpinState& spin) {
+    PhysicsState k1 = derivative(state, config, spin);
+    PhysicsState k2 = derivative(add(state, multiply(k1, TimeStep / 2.0)), config, spin);
+    PhysicsState k3 = derivative(add(state, multiply(k2, TimeStep / 2.0)), config, spin);
+    PhysicsState k4 = derivative(add(state, multiply(k3, TimeStep)), config, spin);
 
     return add(state, multiply(add(add(k1, multiply(k2, 2.0)), add(multiply(k3, 2.0), k4)), TimeStep / 6.0));
 }
@@ -226,8 +297,7 @@ void simulateBounceAndRoll(BattedBall& ball,
                            const Vector3& landingMeters,
                            const Vector3& landingVelocityMeters,
                            const BallConfig& config,
-                           double backSpinRpm,
-                           double sideSpin) {
+                           const SpinState& spin) {
     Vector3 position = landingMeters;
     Vector3 velocity = landingVelocityMeters;
 
@@ -248,7 +318,7 @@ void simulateBounceAndRoll(BattedBall& ball,
         while (bounceState.position.z >= 0.0) {
             addFeetPoint(ball.bounceTrajectory, bounceState.position);
             previous = bounceState;
-            bounceState = rk4Step(bounceState, config, backSpinRpm, sideSpin);
+            bounceState = rk4Step(bounceState, config, spin);
         }
 
         const double denominator = previous.position.z - bounceState.position.z;
@@ -315,17 +385,33 @@ BattedBall BallPhysicsEngine::simulate(const BattedBallInput& input,
     };
 
     BallConfig config;
+    config.airDensity = computeAirDensity(ballpark.altitudeFeet, ballpark.temperatureFahrenheit);
+    // Wind: convert mph to m/s; direction 0°=toward CF(tailwind), 90°=L→R, 180°=toward HP
+    {
+        const double windRad = ballpark.windDirectionDeg * Pi / 180.0;
+        const double windMs  = ballpark.windSpeedMph * MetersPerMph;
+        config.windX = windMs * std::sin(windRad);
+        config.windY = windMs * std::cos(windRad);
+    }
+
+    const SpinState spin = spinStateForBattedBall(input.backSpin, input.sideSpin, input.sprayAngle);
+
     std::vector<Vector3> trajectory;
     PhysicsState previous = state;
     double elapsed = 0.0;
     double maxHeightMeters = state.position.z;
+
+    // Spin decays ~6% per second (Statcast: ~5-8% for batted balls)
+    constexpr double BattedBallSpinDecay = 0.06;
 
     while (state.position.z >= 0.0 && elapsed < 12.0) {
         trajectory.push_back(state.position);
         previous = state;
         maxHeightMeters = std::max(maxHeightMeters, state.position.z);
 
-        state = rk4Step(state, config, input.backSpin, input.sideSpin);
+        SpinState decayedSpin = spin;
+        decayedSpin.rateRpm = spin.rateRpm * std::exp(-BattedBallSpinDecay * elapsed);
+        state = rk4Step(state, config, decayedSpin);
         elapsed += TimeStep;
     }
 
@@ -368,7 +454,7 @@ BattedBall BallPhysicsEngine::simulate(const BattedBallInput& input,
     for (const auto& point : trajectory) {
         ball.trajectory.push_back({point.x * FeetPerMeter, point.y * FeetPerMeter, point.z * FeetPerMeter});
     }
-    simulateBounceAndRoll(ball, landingMeters, landingVelocityMeters, config, input.backSpin, input.sideSpin);
+    simulateBounceAndRoll(ball, landingMeters, landingVelocityMeters, config, spin);
     fillFenceData(ball, ballpark);
     ball.classification = classify(ball, foul, ballpark);
     ball.isBunt = input.isBunt;
@@ -419,6 +505,7 @@ BattedBall BallPhysicsEngine::generateFromContact(int batterPower, int pitcherSt
             input.launchAngle = signedBell(random, 27.0, 8.0, 4);
             break;
         case AtBatResultType::Walk:
+        case AtBatResultType::HitByPitch:
         case AtBatResultType::StrikeOut:
         case AtBatResultType::Error:
         case AtBatResultType::FielderChoice:
@@ -433,12 +520,12 @@ BattedBall BallPhysicsEngine::generateFromContact(int batterPower, int pitcherSt
     input.exitVelocity = clamp(input.exitVelocity, 45.0, 123.0);
     input.launchAngle = clamp(input.launchAngle, -32.0, 62.0);
     input.sprayAngle = clamp(input.sprayAngle, -52.0, 52.0);
-    input.backSpin = clamp(850.0 + input.launchAngle * 55.0 + input.exitVelocity * 8.0 + signedBell(random, 0.0, 420.0, 4),
-                           450.0,
-                           3600.0);
-    if (input.launchAngle < 2.0) {
-        input.backSpin = clamp(input.backSpin * 0.55, 250.0, 1500.0);
-    }
+    // Physics-based spin: positive = backspin (lift), negative = topspin (drop)
+    // tanh transition: grounders get topspin, fly balls get backspin
+    const double spinMag = clamp(input.exitVelocity * 26.0 + signedBell(random, 0.0, 380.0, 4),
+                                 700.0, 3400.0);
+    const double spinDir = std::tanh((input.launchAngle - 4.0) / 10.0);  // -1=topspin, +1=backspin
+    input.backSpin = spinMag * spinDir;
     input.sideSpin = clamp(input.sprayAngle * 0.055 + signedBell(random, 0.0, 2.6, 4), -7.5, 7.5);
 
     BattedBall ball = simulate(input);

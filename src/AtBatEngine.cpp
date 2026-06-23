@@ -35,6 +35,7 @@ PlayResult AtBatEngine::simulate(const Player& batter, const Player& pitcher, Ra
     const double pitcherVelocity = (pitcher.pitchingVelocity - 50) * 0.0020;
 
     const double walkProbability = clamp(0.085 + eyeScore - pitcherControl, 0.035, 0.16);
+    const double hitByPitchProbability = clamp(0.010 - pitcherControl * 0.5, 0.004, 0.020);
     const double strikeOutProbability = clamp(0.205 - contactScore + pitcherStuff + pitcherVelocity, 0.08, 0.34);
     const double homeRunProbability = clamp(0.032 + powerScore - pitcherStuff * 0.45, 0.008, 0.085);
     const double tripleProbability = clamp(0.008 + (batter.speed - 50) * 0.00018, 0.002, 0.025);
@@ -50,6 +51,12 @@ PlayResult AtBatEngine::simulate(const Player& batter, const Player& pitcher, Ra
 
     if (roll < threshold) {
         result.type = AtBatResultType::Walk;
+        return result;
+    }
+
+    threshold += hitByPitchProbability;
+    if (roll < threshold) {
+        result.type = AtBatResultType::HitByPitch;
         return result;
     }
 
@@ -85,40 +92,23 @@ PlayResult AtBatEngine::simulate(const Player& batter, const Player& pitcher, Ra
     return result;
 }
 
-AtBatResult AtBatEngine::simulatePlateAppearance(const Player& batter, const Player& pitcher, Random& random) const {
+AtBatResult AtBatEngine::simulatePlateAppearance(const Player& batter,
+                                                 const Player& pitcher,
+                                                 Random& random,
+                                                 bool buntIntent) const {
+    AtBatState state = startAtBat(batter, pitcher);
+    state.buntIntent = buntIntent;
+    while (!simulateNextPitch(state, random)) {}
+
     AtBatResult result;
-    result.batter = batter;
-    result.pitcher = pitcher;
-
-    Count count;
-    int pitchNumber = 1;
-
-    while (true) {
-        PitchLog log = simulatePitch(batter, pitcher, count, pitchNumber, random);
-        count = log.countAfter;
-        result.pitchLogs.push_back(log);
-        result.finalCount = count;
-
-        if (log.pitchOutcome == PitchOutcome::InPlay) {
-            result.finalOutcome = AtBatOutcome::InPlay;
-            if (log.contactResult.has_value()) {
-                result.battedBallInput = log.contactResult->battedBallInput;
-            }
-            return result;
-        }
-
-        if (isWalk(count)) {
-            result.finalOutcome = AtBatOutcome::Walk;
-            return result;
-        }
-
-        if (isStrikeOut(count)) {
-            result.finalOutcome = AtBatOutcome::StrikeOut;
-            return result;
-        }
-
-        ++pitchNumber;
-    }
+    result.batter = state.batter;
+    result.pitcher = state.pitcher;
+    result.finalOutcome = state.finalOutcome.value_or(AtBatOutcome::StrikeOut);
+    result.finalCount = state.count;
+    result.pitchLogs = state.pitchLogs;
+    result.baseRunningEvents = state.baseRunningEvents;
+    result.battedBallInput = state.battedBallInput;
+    return result;
 }
 
 AtBatState AtBatEngine::startAtBat(const Player& batter, const Player& pitcher) const {
@@ -137,20 +127,39 @@ bool AtBatEngine::simulateNextPitch(AtBatState& state, Random& random) const {
         PitchLog log;
         log.pitchNumber = state.pitchNumber;
         log.countBefore = state.count;
-        log.pitch = pitchEngine_.generate(state.pitcher, state.count, state.batter.battingSide, random);
+        log.pitch = pitchEngine_.generate(state.pitcher, state.batter, state.count, state.lastPitch, random);
 
-        // Decide whether to attempt bunt (take bad pitches ~20% of time)
-        const bool attemptBunt = random.chance(0.80);
+        const double contact = clamp((state.batter.contact - 50) / 50.0, -0.8, 0.8);
+        const double pitchQuality = clamp(log.pitch.pitchQuality, 0.0, 1.0);
+        const bool buntablePitch = std::abs(log.pitch.locationX) <= 1.15
+                                && log.pitch.locationZ >= 1.15
+                                && log.pitch.locationZ <= 3.85;
+        const double takeBadPitch = buntablePitch ? 0.0 : 0.34;
+
+        // Decide whether to offer. Bad pitches are often pulled back.
+        const bool attemptBunt = random.chance(std::clamp(0.78 - takeBadPitch + contact * 0.07,
+                                                          0.35,
+                                                          0.86));
 
         if (attemptBunt) {
             const double roll = random.real(0.0, 1.0);
+            const double goodBuntProb = std::clamp(0.48 + contact * 0.10
+                                                       - pitchQuality * 0.12
+                                                       + (buntablePitch ? 0.08 : -0.16),
+                                                   0.28,
+                                                   0.66);
+            const double foulBuntProb = std::clamp(0.27 - contact * 0.035
+                                                       + pitchQuality * 0.06
+                                                       + (buntablePitch ? 0.01 : 0.10),
+                                                   0.16,
+                                                   0.39);
 
-            if (roll < 0.65) {
+            if (roll < goodBuntProb) {
                 // Good bunt — InPlay
                 BattedBallInput buntInput;
-                buntInput.exitVelocity = random.real(28.0, 58.0);
-                buntInput.launchAngle  = random.real(-8.0, 6.0);
-                buntInput.sprayAngle   = random.real(-38.0, 38.0);
+                buntInput.exitVelocity = random.real(24.0, 52.0) - contact * 3.0;
+                buntInput.launchAngle  = random.real(-10.0, 5.0);
+                buntInput.sprayAngle   = random.real(-32.0, 32.0);
                 buntInput.isBunt       = true;
 
                 log.swingDecision.decision = SwingDecisionType::Swing;
@@ -169,7 +178,7 @@ bool AtBatEngine::simulateNextPitch(AtBatState& state, Random& random) const {
                 state.isFinished = true;
                 return true;
 
-            } else if (roll < 0.85) {
+            } else if (roll < goodBuntProb + foulBuntProb) {
                 // Foul bunt
                 log.swingDecision.decision = SwingDecisionType::Swing;
                 log.contactResult = ContactResult{};
@@ -220,6 +229,7 @@ bool AtBatEngine::simulateNextPitch(AtBatState& state, Random& random) const {
 
     PitchLog log = simulatePitch(state.batter, state.pitcher, state.count, state.pitchNumber, random);
     state.count = log.countAfter;
+    state.lastPitch = log.pitch;
     state.pitchLogs.push_back(log);
     ++state.pitchNumber;
 
@@ -252,7 +262,7 @@ PitchLog AtBatEngine::simulatePitch(const Player& batter,
     PitchLog log;
     log.pitchNumber = pitchNumber;
     log.countBefore = count;
-    log.pitch = pitchEngine_.generate(pitcher, count, batter.battingSide, random);
+    log.pitch = pitchEngine_.generate(pitcher, batter, count, std::nullopt, random);
     log.swingDecision = swingDecisionEngine_.decide(batter, log.pitch, count, pitcher.throwingHand, random);
 
     if (log.swingDecision.decision == SwingDecisionType::Take) {
@@ -325,6 +335,8 @@ std::string toString(AtBatResultType type) {
             return "beats out a bunt single";
         case AtBatResultType::BuntFielderChoice:
             return "reaches on bunt fielder's choice";
+        case AtBatResultType::HitByPitch:
+            return "is hit by a pitch";
     }
     return "finishes the at-bat";
 }

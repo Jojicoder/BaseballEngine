@@ -1,5 +1,5 @@
 CXX := clang++
-CXXFLAGS := -std=c++17 -Wall -Wextra -Wpedantic -I../include
+CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -Wpedantic -I../include
 SFML := /opt/homebrew/opt/sfml
 SFML_CXXFLAGS := $(CXXFLAGS) -I$(SFML)/include
 SFML_LDFLAGS := -L$(SFML)/lib -lsfml-graphics -lsfml-window -lsfml-system
@@ -10,6 +10,8 @@ ATBAT_TARGET := $(BUILD_DIR)/JojiAtBatDebug
 TEST_TARGET := $(BUILD_DIR)/JojiEngineTests
 STATS_TARGET := $(BUILD_DIR)/JojiStatsRunner
 ANALYSIS_TARGET := $(BUILD_DIR)/JojiAnalysisRunner
+SEASON_TARGET := $(BUILD_DIR)/JojiSeasonRunner
+LEAGUE_TARGET := $(BUILD_DIR)/JojiLeagueRunner
 ENGINE_SOURCES := \
 	../src/AtBatTypes.cpp \
 	../src/AnimationPlanBuilder.cpp \
@@ -37,8 +39,15 @@ STATS_SOURCES := stats_runner.cpp \
 	$(ENGINE_SOURCES)
 ANALYSIS_SOURCES := analysis_runner.cpp \
 	$(ENGINE_SOURCES)
+SEASON_SOURCES := season_runner.cpp \
+	$(ENGINE_SOURCES)
+LEAGUE_SOURCES := league_runner.cpp \
+	$(ENGINE_SOURCES)
+PITCHCHECK_TARGET := $(BUILD_DIR)/JojiPitchCheck
+PITCHCHECK_SOURCES := pitch_scoring_check.cpp \
+	$(ENGINE_SOURCES)
 
-.PHONY: all run sfml sfml-run atbat atbat-run test stats stats-run analysis analysis-run clean
+.PHONY: all run sfml sfml-run atbat atbat-run test stats stats-run analysis analysis-run season season-run league league-run pitchcheck clean
 
 all: $(TARGET)
 
@@ -90,7 +99,32 @@ $(ANALYSIS_TARGET): $(ANALYSIS_SOURCES)
 	$(CXX) $(CXXFLAGS) $(ANALYSIS_SOURCES) -o $(ANALYSIS_TARGET)
 
 analysis-run: analysis
-	./$(ANALYSIS_TARGET)
+	./$(ANALYSIS_TARGET) $(ARGS)
+
+season: $(SEASON_TARGET)
+
+$(SEASON_TARGET): $(SEASON_SOURCES)
+	mkdir -p $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(SEASON_SOURCES) -o $(SEASON_TARGET)
+
+season-run: season
+	./$(SEASON_TARGET) $(ARGS)
+
+league: $(LEAGUE_TARGET)
+
+$(LEAGUE_TARGET): $(LEAGUE_SOURCES)
+	mkdir -p $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(LEAGUE_SOURCES) -o $(LEAGUE_TARGET)
+
+league-run: league
+	./$(LEAGUE_TARGET) $(ARGS)
+
+pitchcheck: $(PITCHCHECK_TARGET)
+	./$(PITCHCHECK_TARGET)
+
+$(PITCHCHECK_TARGET): $(PITCHCHECK_SOURCES)
+	mkdir -p $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(PITCHCHECK_SOURCES) -o $(PITCHCHECK_TARGET)
 
 clean:
 	rm -rf $(BUILD_DIR)

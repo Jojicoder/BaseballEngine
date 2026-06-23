@@ -22,8 +22,13 @@ public:
                          SwingEngine swingEngine = SwingEngine{},
                          ContactEngine contactEngine = ContactEngine{});
 
+    void setZoneJudge(ZoneJudge zj) { zoneJudge_ = std::move(zj); }
+
     PlayResult simulate(const Player& batter, const Player& pitcher, Random& random) const;
-    AtBatResult simulatePlateAppearance(const Player& batter, const Player& pitcher, Random& random) const;
+    AtBatResult simulatePlateAppearance(const Player& batter,
+                                        const Player& pitcher,
+                                        Random& random,
+                                        bool buntIntent = false) const;
 
     // 1球ずつモード
     AtBatState startAtBat(const Player& batter, const Player& pitcher) const;

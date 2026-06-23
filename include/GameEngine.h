@@ -9,6 +9,7 @@
 #include "Team.h"
 
 #include <iosfwd>
+#include <map>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -32,6 +33,20 @@ struct TeamBoxScore {
     int sacFlyAttempts         = 0;  // SFA: 犠牲フライ試み
     int sacFlySuccesses        = 0;  // SFS: 犠牲フライ成立
     int sacBunts               = 0;  // SAC: 犠打
+    int doubles_               = 0;  // 2B hits (BABIP / 2B-BIP 計算用)
+    int badThrows              = 0;
+    int throwingErrors         = 0;
+    int stolenBaseAttempts     = 0;
+    int stolenBases            = 0;
+    int caughtStealing         = 0;
+    int wildPitches            = 0;
+    int passedBalls            = 0;
+    int balks                  = 0;
+    int pickoffAttempts        = 0;
+    int pickoffOuts            = 0;
+    int buntAttempts           = 0;
+    int buntSuccesses          = 0;
+    int infieldFlies           = 0;
 };
 
 class GameEngine {
@@ -60,6 +75,7 @@ public:
     const std::vector<PlayerBoxScore>& awayPlayerStats() const;
     const std::vector<PlayerBoxScore>& homePlayerStats() const;
     const DefenseAlignment& currentDefenseAlignment() const;
+    const BallparkConfig& ballpark() const;
 
     // Pitcher stats (one entry per pitcher who appeared)
     const std::vector<PitcherBoxScore>& awayPitcherStats() const;
@@ -80,6 +96,15 @@ public:
     // 現在マウンドの投手 (SFML 表示用)
     const Player& currentPitcher() const;
 
+    // 打順 / ラインアップ (SFML 打順表示用)
+    const std::vector<Player>& awayLineup() const;
+    const std::vector<Player>& homeLineup() const;
+    int awayBattingIndex() const;
+    int homeBattingIndex() const;
+
+    // 現在投手の球種別球数 (SFML アーセナル表示用)
+    const std::map<std::string, int>& currentPitcherArsenal() const;
+
     // ─── SFML 表示用 ───────────────────────────────────────────────
     struct PitcherChangeEvent {
         std::string fromName;
@@ -90,6 +115,8 @@ public:
     double pitcherFormValue() const;
     double batterFormValue(const std::string& playerName) const;
     double currentPitcherERA() const;
+    // Returns estimated velocity drop (negative = slower) from fatigue, e.g. -3.5
+    double currentPitcherVelocityDrop() const;
 
 private:
     Team& battingTeam();
@@ -122,6 +149,8 @@ private:
     std::vector<bool>& currentBullpenUsed();
     void considerPitcherChange();
     void tryPitcherChange();
+    void considerPinchHitter();
+    bool considerIntentionalWalk();
     void changePitcher(const Player& newPitcher, std::size_t bullpenIndex);
     void initPitcherSit();
     void finalizePitcherSit();
@@ -196,6 +225,9 @@ private:
     PitcherSitTracker& currentSit();
 
     std::optional<PitcherChangeEvent> lastPitcherChange_;
+
+    // 現在投手の球種別球数 (投手交代でリセット)
+    std::map<std::string, int> currentPitcherArsenal_;
 
     // 先発 W 資格: 5 回以上投げてリードで降板したとき true
     bool awayStarterPotentialWin_ = false;
