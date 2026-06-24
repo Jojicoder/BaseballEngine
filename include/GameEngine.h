@@ -57,6 +57,9 @@ public:
                AtBatEngine atBatEngine = AtBatEngine{});
 
     void simulate(std::ostream& out);
+    // 連投疲労マップ: pitcher name → 前回登板からの休養日数 (0=前日登板)
+    void setFatigueMap(std::map<std::string, int> daysSinceLastPitch);
+
     std::optional<PlayResult> simulateNextPlay(std::ostream* out = nullptr);
     bool isComplete() const;
     GameResult result() const;
@@ -232,6 +235,9 @@ private:
     // 先発 W 資格: 5 回以上投げてリードで降板したとき true
     bool awayStarterPotentialWin_ = false;
     bool homeStarterPotentialWin_ = false;
+
+    // 連投疲労マップ: pitcher name → 前回登板からの休養日数 (0=前日登板)
+    std::map<std::string, int> fatigueMap_;
 
     // 1球ずつモード用
     AtBatState currentAtBat_;

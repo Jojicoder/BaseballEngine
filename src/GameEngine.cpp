@@ -742,19 +742,21 @@ std::string toString(PitcherRole role) {
 
 Team::Team(std::string teamName, std::vector<Player> lineup,
            std::vector<Player> rotation, std::vector<Player> bullpen,
-           std::vector<Player> bench, BallparkConfig ballpark)
+           std::vector<Player> bench, BallparkConfig ballpark, League league)
     : name_(std::move(teamName))
     , lineup_(std::move(lineup))
     , rotation_(std::move(rotation))
     , bullpen_(std::move(bullpen))
     , bench_(std::move(bench))
     , usedBench_(bench_.size(), false)
-    , homeBallpark_(std::move(ballpark)) {
+    , homeBallpark_(std::move(ballpark))
+    , league_(league) {
     if (lineup_.empty()) throw std::invalid_argument("Team lineup cannot be empty.");
     if (rotation_.empty()) throw std::invalid_argument("Team rotation cannot be empty.");
 }
 
 const BallparkConfig& Team::homeBallpark() const { return homeBallpark_; }
+League Team::league() const { return league_; }
 
 const std::string& Team::name() const { return name_; }
 
@@ -1277,18 +1279,32 @@ void GameEngine::considerPitcherChange() {
         }
     }
 
+    // スタミナ連動: pitchingStamina が高いほど交代閾値が高く、低いほど早めに引く
+    const int stamina = currentPitcher().pitchingStamina;
+    const int staminaBonus = (stamina - 50) / 5;  // stamina 40→-2, 50→0, 60→+2, 70→+4
+
+    // 連投中の投手は早めに引く
+    bool fatigued = false;
+    if (auto it = fatigueMap_.find(currentPitcher().name); it != fatigueMap_.end())
+        fatigued = (it->second <= 1);
+
     bool shouldChange = false;
     if (role == PitcherRole::Starter) {
-        if      (pitchCount >= 110)                                        shouldChange = true;
-        else if (pitchCount >= 100)                                        shouldChange = true;
-        else if (pitchCount >= 90  && runsAllowed >= 3)                    shouldChange = true;
-        else if (pitchCount >= 80  && state_.inning >= 7)                  shouldChange = true;
-        else if (pitchCount >= 75  && badForm && runsAllowed >= 2)         shouldChange = true;
-        else if (state_.inning >= 5 && runsAllowed >= 5)                   shouldChange = true;
+        const int hardLimit = 110 + staminaBonus;
+        const int softLimit = 100 + staminaBonus;
+        if      (pitchCount >= hardLimit)                                        shouldChange = true;
+        else if (pitchCount >= softLimit)                                        shouldChange = true;
+        else if (pitchCount >= 90  && runsAllowed >= 3)                          shouldChange = true;
+        else if (pitchCount >= 80  && state_.inning >= 7)                        shouldChange = true;
+        else if (pitchCount >= 75  && badForm && runsAllowed >= 2)               shouldChange = true;
+        else if (state_.inning >= 5 && runsAllowed >= 5)                         shouldChange = true;
     } else {
-        if      (pitchCount >= 35)                                         shouldChange = true;
-        else if (pitchCount >= 25  && runsAllowed >= 2)                    shouldChange = true;
-        else if (pitchCount >= 20  && badForm && runsAllowed >= 1)         shouldChange = true;
+        const int relMax = fatigued ? 25 : 35;
+        const int relMid = fatigued ? 18 : 25;
+        const int relLow = fatigued ? 12 : 20;
+        if      (pitchCount >= relMax)                                           shouldChange = true;
+        else if (pitchCount >= relMid && runsAllowed >= 2)                       shouldChange = true;
+        else if (pitchCount >= relLow && badForm && runsAllowed >= 1)            shouldChange = true;
     }
 
     if (shouldChange) tryPitcherChange();
@@ -1459,7 +1475,25 @@ Player GameEngine::effectivePitcher() const {
         p.pitchingControl  = std::max(25, p.pitchingControl  - static_cast<int>(penalty * 0.35 * acc));
         p.pitchingStuff    = std::max(30, p.pitchingStuff    - static_cast<int>(penalty * 0.25 * acc));
     }
+
+    // 3. 連投疲労補正 — 前日登板(0日休養)は能力ダウン、2日連続(1日休養)は軽微ダウン
+    if (auto it = fatigueMap_.find(p.name); it != fatigueMap_.end()) {
+        const int daysRest = it->second;
+        if (daysRest == 0) {
+            p.pitchingVelocity = std::max(40, p.pitchingVelocity - 4);
+            p.pitchingControl  = std::max(25, p.pitchingControl  - 6);
+            p.pitchingStuff    = std::max(30, p.pitchingStuff    - 4);
+        } else if (daysRest == 1) {
+            p.pitchingVelocity = std::max(40, p.pitchingVelocity - 2);
+            p.pitchingControl  = std::max(25, p.pitchingControl  - 3);
+            p.pitchingStuff    = std::max(30, p.pitchingStuff    - 2);
+        }
+    }
     return p;
+}
+
+void GameEngine::setFatigueMap(std::map<std::string, int> m) {
+    fatigueMap_ = std::move(m);
 }
 
 bool GameEngine::simulateNextPitch() {
@@ -1833,6 +1867,7 @@ PlayResult GameEngine::buildPlayResult(const AtBatState& atBat) {
     }
 
     result.battedBall = ballPhysicsEngine_.simulate(*atBat.battedBallInput, ballpark_);
+    result.battedBall.batterSpeedNorm = std::clamp((atBat.batter.speed - 50) / 50.0, -0.8, 0.8);
     const DefenseAlignment shiftedDefense = applyDefensiveShift(pitchingDefenseAlignment(), atBat.batter);
     const PlayResolution resolution = playResolutionEngine_.resolve(
         result.battedBall, state_, random_, shiftedDefense, ballpark_);

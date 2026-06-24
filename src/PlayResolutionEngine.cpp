@@ -318,21 +318,29 @@ double grounderDifficulty(const BattedBall& ball) {
     return std::clamp(d, 0.0, 1.0);
 }
 
-// Zone-based ground ball out probability — replaces kinematic timeReach/evReach model.
-// Calibrated to MLB average GB out rate ~74%: primary zone 88-94%, corner zone 68-72%.
-double groundBallOutProb(const BattedBall& ball, const FieldingAttempt& attempt) {
+// Zone-based ground ball out probability — calibrated to MLB average GB out rate ~74%.
+// rollSpeed: ball speed at start of rolling phase (ft/s); batterSpeed: normalized batter speed.
+double groundBallOutProb(const BattedBall& ball, const FieldingAttempt& attempt,
+                         double rollSpeed = 0.0, double batterSpeedNorm = 0.0) {
     const double absSpray = std::abs(ball.sprayAngle);
     double base;
-    if (absSpray < 8.0)        base = 0.80; // up the middle
-    else if (absSpray < 16.0)  base = 0.74; // SS/2B primary zone
-    else if (absSpray < 24.0)  base = 0.66; // SS/2B edge / 1B/3B primary zone
-    else if (absSpray < 33.0)  base = 0.56; // corner IF zone
-    else                        base = 0.42; // extreme pull: down the line
+    if (absSpray < 8.0)        base = 0.82; // up the middle
+    else if (absSpray < 16.0)  base = 0.76; // SS/2B primary zone
+    else if (absSpray < 24.0)  base = 0.68; // SS/2B edge / 1B/3B primary zone
+    else if (absSpray < 33.0)  base = 0.58; // corner IF zone
+    else                        base = 0.44; // extreme pull: down the line
     // Hard-hit penalty: EV 82→110 reduces out rate by up to 0.30
     const double evPenalty  = std::clamp((ball.exitVelocity - 82.0) / 28.0 * 0.30, 0.0, 0.30);
+    // Slow roller bonus: roll speed < 30 ft/s → fielder has more time but tricky hops.
+    // Very slow (< 15 ft/s) is hardest to field fast enough for out, but batter speed matters.
+    const double slowBonus  = rollSpeed > 0.0
+        ? std::clamp((30.0 - rollSpeed) / 30.0 * 0.12, 0.0, 0.12) : 0.0;
+    // Fast batter penalty on slow rollers: speed bumps infield hit chance.
+    const double speedPenalty = rollSpeed > 0.0 && rollSpeed < 25.0
+        ? std::clamp(batterSpeedNorm * (25.0 - rollSpeed) / 25.0 * 0.14, 0.0, 0.14) : 0.0;
     // Fielder quality: 0.83 = average MLB IF; ±0.10 fielding → ±3% out rate
     const double fieldBonus = (attempt.fielding - 0.83) * 0.30;
-    return std::clamp(base - evPenalty + fieldBonus, 0.12, 0.95);
+    return std::clamp(base - evPenalty + slowBonus - speedPenalty + fieldBonus, 0.10, 0.95);
 }
 
 double flyDifficulty(const BattedBall& ball) {
@@ -608,7 +616,9 @@ PlayResolution PlayResolutionEngine::resolve(const BattedBall& ball,
             && (ball.estimatedDistance < 160.0 || radialDistance(target) < 186.0);
         if (!inZone) return missedGroundBallResolution();
 
-        if (random.real(0.0, 1.0) >= groundBallOutProb(ball, attempt)) {
+        if (random.real(0.0, 1.0) >= groundBallOutProb(ball, attempt,
+                                                         ball.initialRollSpeed,
+                                                         ball.batterSpeedNorm)) {
             return missedGroundBallResolution();
         }
 

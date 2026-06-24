@@ -109,6 +109,38 @@ struct BallparkConfig {
     static BallparkConfig foxField() {
         return {"Fox Field", 7.0, 408.0, 372.0, 330.0, 0.0, 70.0};
     }
+
+    // ── League B — Philadelphia district ballparks ────────────────────────────
+    // Fishtown Ferals — Ferals Field
+    // Short corners, warm urban air. Hitter's park in a tight neighborhood.
+    static BallparkConfig feralsField() {
+        return {"Ferals Field", 7.0, 395.0, 352.0, 308.0, 0.0, 75.0};
+    }
+    // Kensington Iron — Iron Works
+    // Industrial neighborhood. Slightly hitter-friendly corners.
+    static BallparkConfig ironWorks() {
+        return {"Iron Works", 7.0, 402.0, 360.0, 316.0, 0.0, 72.0};
+    }
+    // Germantown Colonials — Colonial Field
+    // Historic, symmetrical. True neutral park.
+    static BallparkConfig colonialField() {
+        return {"Colonial Field", 7.0, 404.0, 368.0, 324.0, 0.0, 71.0};
+    }
+    // Manayunk Runners — Canal Park
+    // Built along the Schuylkill canal. Slightly spacious, suits contact play.
+    static BallparkConfig canalPark() {
+        return {"Canal Park", 7.0, 406.0, 370.0, 328.0, 0.0, 70.0};
+    }
+    // Fairmount Rams — Fairmount Field
+    // Large park inspired by Fairmount Park. Pitcher-friendly gaps.
+    static BallparkConfig fairmountField() {
+        return {"Fairmount Field", 7.0, 408.0, 374.0, 330.0, 0.0, 70.0};
+    }
+    // South Philly Stallions — Stallions Field
+    // Biggest park in the league. Deep fences suit a pitching-first rebuild.
+    static BallparkConfig stallionsField() {
+        return {"Stallions Field", 7.0, 410.0, 376.0, 332.0, 0.0, 69.0};
+    }
 };
 
 struct PlayResolution {

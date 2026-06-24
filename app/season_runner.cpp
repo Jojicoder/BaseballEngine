@@ -13,7 +13,8 @@
 
 namespace {
 
-constexpr int GAMES_PER_SERIES = 3;
+constexpr int INTRA_SERIES = 12;  // intra-league: 5 opponents × 12 = 60 games
+constexpr int INTER_SERIES =  6;  // inter-league: 6 opponents × 6  = 36 games
 
 // ── 累積構造体 ──────────────────────────────────────────────────────────────
 
@@ -51,6 +52,14 @@ struct BatterAccum {
         const int att = stolenBases + caughtStealing;
         return att > 0 ? static_cast<double>(stolenBases) / att : 0.0;
     }
+    // wOBA: FanGraphs linear weights (2024 scale)
+    double woba() const {
+        const int singles = hits - doubles_ - triples - homeRuns;
+        const double num  = 0.690*walks + 0.720*hitByPitch + 0.888*singles
+                          + 1.271*doubles_ + 1.616*triples + 2.101*homeRuns;
+        const int denom   = atBats + walks + hitByPitch + sacFlies;
+        return denom > 0 ? num / denom : 0.0;
+    }
 };
 
 struct PitcherAccum {
@@ -70,10 +79,26 @@ struct PitcherAccum {
     int holds           = 0;
     int blownSaves      = 0;
 
-    double ip()    const { return outsRecorded / 3.0; }
-    double era()   const { return outsRecorded > 0 ? earnedRuns * 27.0 / outsRecorded : 0.0; }
-    double whip()  const { return outsRecorded > 0 ? (walks + hitsAllowed) * 3.0 / outsRecorded : 0.0; }
-    double kPer9() const { return outsRecorded > 0 ? strikeouts * 27.0 / outsRecorded : 0.0; }
+    double ip()        const { return outsRecorded / 3.0; }
+    double era()       const { return outsRecorded > 0 ? earnedRuns * 27.0 / outsRecorded : 0.0; }
+    double whip()      const { return outsRecorded > 0 ? (walks + hitsAllowed) * 3.0 / outsRecorded : 0.0; }
+    double kPer9()     const { return outsRecorded > 0 ? strikeouts * 27.0 / outsRecorded : 0.0; }
+    double bb9()       const { return outsRecorded > 0 ? walks * 27.0 / outsRecorded : 0.0; }
+    int gamesRelief()  const { return games - gamesStarted; }
+    // FIP = (13×HR + 3×BB − 2×K) / IP + constant (3.10 ≈ league-average ERA offset)
+    double fip() const {
+        if (outsRecorded == 0) return 0.0;
+        return (13.0*homeRunsAllowed + 3.0*walks - 2.0*strikeouts) * 3.0 / outsRecorded + 3.10;
+    }
+    // xFIP: HR regressed 50% toward league average (1.20 HR/9) — no fly ball data needed
+    double xfip(double lgHrPer9 = 1.20) const {
+        if (outsRecorded == 0) return 0.0;
+        const double ipVal      = outsRecorded / 3.0;
+        const double actualHrP9 = homeRunsAllowed * 9.0 / ipVal;
+        const double expHrP9    = 0.5 * actualHrP9 + 0.5 * lgHrPer9;
+        const double expHr      = expHrP9 * ipVal / 9.0;
+        return (13.0*expHr + 3.0*walks - 2.0*strikeouts) * 3.0 / outsRecorded + 3.10;
+    }
 };
 
 struct TeamBaserunAccum {
@@ -131,6 +156,7 @@ using PosDefMap = std::map<joji::Position, PosDefAccum>;
 
 struct TeamAccum {
     std::string name;
+    joji::League league = joji::League::A;
     int totalW  = 0;
     int totalL  = 0;
     int totalRS = 0;
@@ -275,19 +301,49 @@ void runSeason(std::vector<joji::Team>& teams,
     // 5人ローテーション追跡: チームごとに何試合目かをカウント
     std::vector<int> rotSlot(n, 0);
 
+    // 連投疲労追跡: pitcher name → 最後に登板したゲーム番号
+    int gameCounter = 0;
+    std::map<std::string, int> lastAppearanceGame;
+
     for (int i = 0; i < n; ++i) {
         for (int j = i + 1; j < n; ++j) {
-            for (int g = 0; g < GAMES_PER_SERIES; ++g) {
+            const int seriesLen = (teams[i].league() == teams[j].league())
+                                  ? INTRA_SERIES : INTER_SERIES;
+            for (int g = 0; g < seriesLen; ++g) {
                 teams[i].setStarterSlot(rotSlot[i]++ % 5);
                 teams[j].setStarterSlot(rotSlot[j]++ % 5);
+
+                // 連投疲労マップ: 各チームの投手の休養日数を計算
+                // 同一チームの投手が1試合に1回登板する想定 (実際のMLBと同じ)
+                auto buildFatigue = [&](const joji::Team& team) {
+                    std::map<std::string, int> fm;
+                    auto addPitcher = [&](const joji::Player& p) {
+                        if (auto it = lastAppearanceGame.find(p.name); it != lastAppearanceGame.end())
+                            fm[p.name] = gameCounter - it->second - 1;
+                    };
+                    addPitcher(team.starter());
+                    for (const auto& bp : team.bullpen()) addPitcher(bp);
+                    return fm;
+                };
+                auto fatigueI = buildFatigue(teams[i]);
+                auto fatigueJ = buildFatigue(teams[j]);
+
                 joji::GameEngine engine{
                     teams[i], teams[j],
                     joji::Random{std::optional<uint32_t>{seed++}},
                     joji::GameRules{},
                     teams[j].homeBallpark()
                 };
+                engine.setFatigueMap(fatigueI);  // away team fatigue
                 std::ostringstream sink;
                 engine.simulate(sink);
+
+                // 登板した投手の最終登板ゲームを更新
+                for (const auto& ps : engine.awayPitcherStats())
+                    if (ps.outsRecorded > 0) lastAppearanceGame[ps.name] = gameCounter;
+                for (const auto& ps : engine.homePitcherStats())
+                    if (ps.outsRecorded > 0) lastAppearanceGame[ps.name] = gameCounter;
+                ++gameCounter;
 
                 const auto res = engine.result();
                 if (res.type == joji::GameResultType::AwayWin) { sw[i]++; sl[j]++; }
@@ -370,23 +426,34 @@ int runPlayoffSeries(const joji::Team& teamA, const joji::Team& teamB,
     return (winsA >= needed) ? 0 : 1;
 }
 
-// Run one season's playoffs; returns champion name
-// Top 4 teams by season wins: semis (best-of-3), finals (best-of-5)
+// Run one season's playoffs (2-league format):
+//   League Championship Series: top 2 per league, best-of-5
+//   World Series: league champions, best-of-7
+// Returns World Series champion name.
 std::string runPlayoffs(const std::vector<joji::Team>& teams,
                         const std::vector<int>& seasonWins,
                         uint32_t& seed) {
     const int n = static_cast<int>(teams.size());
-    std::vector<int> order(n);
-    std::iota(order.begin(), order.end(), 0);
-    std::stable_sort(order.begin(), order.end(),
-                     [&seasonWins](int a, int b){ return seasonWins[a] > seasonWins[b]; });
 
-    const int s1 = order[0], s4 = order[3];
-    const int s2 = order[1], s3 = order[2];
-    const int w1 = (runPlayoffSeries(teams[s1], teams[s4], 3, seed) == 0) ? s1 : s4;
-    const int w2 = (runPlayoffSeries(teams[s2], teams[s3], 3, seed) == 0) ? s2 : s3;
-    const int champ = (runPlayoffSeries(teams[w1], teams[w2], 5, seed) == 0) ? w1 : w2;
-    return teams[champ].name();
+    // Split and rank by league
+    std::vector<int> leagueA, leagueB;
+    for (int i = 0; i < n; ++i) {
+        if (teams[i].league() == joji::League::A) leagueA.push_back(i);
+        else                                       leagueB.push_back(i);
+    }
+    auto byWins = [&seasonWins](int a, int b){ return seasonWins[a] > seasonWins[b]; };
+    std::sort(leagueA.begin(), leagueA.end(), byWins);
+    std::sort(leagueB.begin(), leagueB.end(), byWins);
+
+    // League Championship Series (best-of-5)
+    const int lcsa = (runPlayoffSeries(teams[leagueA[0]], teams[leagueA[1]], 5, seed) == 0)
+                     ? leagueA[0] : leagueA[1];
+    const int lcsb = (runPlayoffSeries(teams[leagueB[0]], teams[leagueB[1]], 5, seed) == 0)
+                     ? leagueB[0] : leagueB[1];
+
+    // World Series (best-of-7)
+    const int ws = (runPlayoffSeries(teams[lcsa], teams[lcsb], 7, seed) == 0) ? lcsa : lcsb;
+    return teams[ws].name();
 }
 
 void printChampions(const std::map<std::string, int>& counts, int nSeasons) {
@@ -394,7 +461,7 @@ void printChampions(const std::map<std::string, int>& counts, int nSeasons) {
     std::sort(sorted.begin(), sorted.end(),
               [](const auto& a, const auto& b){ return a.second > b.second; });
 
-    std::cout << "\n=== Playoff Champions (" << nSeasons << " seasons) ===\n";
+    std::cout << "\n=== World Series Champions (" << nSeasons << " seasons) ===\n";
     for (const auto& [name, c] : sorted) {
         const int barLen = static_cast<int>(c * 30.0 / nSeasons + 0.5);
         std::cout << std::left  << std::setw(24) << name
@@ -405,15 +472,13 @@ void printChampions(const std::map<std::string, int>& counts, int nSeasons) {
 
 // ── 表示関数 ────────────────────────────────────────────────────────────────
 
-void printStandings(const std::vector<TeamAccum>& acc) {
-    std::vector<TeamAccum> sorted = acc;
-    std::sort(sorted.begin(), sorted.end(),
+void printLeagueTable(const std::string& title, std::vector<TeamAccum> rows) {
+    std::sort(rows.begin(), rows.end(),
               [](const TeamAccum& a, const TeamAccum& b){ return a.pct() > b.pct(); });
+    const double leaderW = rows.front().avgW();
 
-    const double leaderW = sorted.front().avgW();
-
-    std::cout << "\n=== Average Standings ===\n";
-    std::cout << std::left  << std::setw(22) << "Team"
+    std::cout << "\n=== " << title << " ===\n";
+    std::cout << std::left  << std::setw(26) << "Team"
               << std::right << std::setw(6)  << "W"
               << std::setw(6)  << "L"
               << std::setw(7)  << "PCT"
@@ -421,9 +486,9 @@ void printStandings(const std::vector<TeamAccum>& acc) {
               << std::setw(7)  << "RS/G"
               << std::setw(7)  << "RA/G"
               << "\n"
-              << std::string(61, '-') << "\n";
+              << std::string(65, '-') << "\n";
 
-    for (const auto& t : sorted) {
+    for (const auto& t : rows) {
         const double gb = leaderW - t.avgW();
         std::ostringstream pct, rs, ra, gbStr;
         pct   << std::fixed << std::setprecision(3) << t.pct();
@@ -431,7 +496,7 @@ void printStandings(const std::vector<TeamAccum>& acc) {
         ra    << std::fixed << std::setprecision(2) << t.raPerG();
         gbStr << std::fixed << std::setprecision(1) << gb;
 
-        std::cout << std::left  << std::setw(22) << t.name
+        std::cout << std::left  << std::setw(26) << t.name
                   << std::right
                   << std::setw(6) << std::fixed << std::setprecision(1) << t.avgW()
                   << std::setw(6) << t.avgL()
@@ -441,6 +506,16 @@ void printStandings(const std::vector<TeamAccum>& acc) {
                   << std::setw(7) << ra.str()
                   << "\n";
     }
+}
+
+void printStandings(const std::vector<TeamAccum>& acc) {
+    std::vector<TeamAccum> leagueA, leagueB;
+    for (const auto& t : acc) {
+        if (t.league == joji::League::A) leagueA.push_back(t);
+        else                             leagueB.push_back(t);
+    }
+    printLeagueTable("League A — New York Metro",         leagueA);
+    printLeagueTable("League B — Philadelphia Districts", leagueB);
 }
 
 // 打者ランキング (AVG / HR / RBI / SB)
@@ -466,17 +541,19 @@ void printBattingLeaders(std::vector<BatterAccum> vec, int minPA, int topN) {
                   << std::setw(7) << "OBP"
                   << std::setw(7) << "SLG"
                   << std::setw(7) << "OPS"
+                  << std::setw(7) << "wOBA"
                   << std::setw(7) << "BABIP"
-                  << "\n" << std::string(65, '-') << "\n";
+                  << "\n" << std::string(72, '-') << "\n";
         int rk = 1;
         for (const auto& b : s) {
             if (rk > topN) break;
-            std::ostringstream avg, obp, slg, ops, bab;
-            avg << std::fixed << std::setprecision(3) << b.avg();
-            obp << std::fixed << std::setprecision(3) << b.obp();
-            slg << std::fixed << std::setprecision(3) << b.slg();
-            ops << std::fixed << std::setprecision(3) << b.ops();
-            bab << std::fixed << std::setprecision(3) << b.babip();
+            std::ostringstream avg, obp, slg, ops, woba, bab;
+            avg  << std::fixed << std::setprecision(3) << b.avg();
+            obp  << std::fixed << std::setprecision(3) << b.obp();
+            slg  << std::fixed << std::setprecision(3) << b.slg();
+            ops  << std::fixed << std::setprecision(3) << b.ops();
+            woba << std::fixed << std::setprecision(3) << b.woba();
+            bab  << std::fixed << std::setprecision(3) << b.babip();
             const std::string abbr = b.team.size() >= 3 ? b.team.substr(0, 3) : b.team;
             std::cout << std::left  << std::setw(4) << rk++
                       << std::setw(20) << b.name
@@ -487,7 +564,43 @@ void printBattingLeaders(std::vector<BatterAccum> vec, int minPA, int topN) {
                       << std::setw(7) << obp.str()
                       << std::setw(7) << slg.str()
                       << std::setw(7) << ops.str()
+                      << std::setw(7) << woba.str()
                       << std::setw(7) << bab.str()
+                      << "\n";
+        }
+    }
+
+    // wOBA
+    {
+        auto s = vec;
+        std::sort(s.begin(), s.end(), [](const BatterAccum& a, const BatterAccum& b){ return a.woba() > b.woba(); });
+        header("wOBA");
+        std::cout << std::right
+                  << std::setw(8) << "PA"
+                  << std::setw(7) << "wOBA"
+                  << std::setw(7) << "OBP"
+                  << std::setw(7) << "SLG"
+                  << std::setw(6) << "HR"
+                  << std::setw(6) << "BB"
+                  << "\n" << std::string(63, '-') << "\n";
+        int rk = 1;
+        for (const auto& b : s) {
+            if (rk > topN) break;
+            std::ostringstream woba, obp, slg;
+            woba << std::fixed << std::setprecision(3) << b.woba();
+            obp  << std::fixed << std::setprecision(3) << b.obp();
+            slg  << std::fixed << std::setprecision(3) << b.slg();
+            const std::string abbr = b.team.size() >= 3 ? b.team.substr(0, 3) : b.team;
+            std::cout << std::left  << std::setw(4) << rk++
+                      << std::setw(20) << b.name
+                      << std::setw(5)  << abbr
+                      << std::right
+                      << std::setw(8) << b.pa()
+                      << std::setw(7) << woba.str()
+                      << std::setw(7) << obp.str()
+                      << std::setw(7) << slg.str()
+                      << std::setw(6) << b.homeRuns
+                      << std::setw(6) << b.walks
                       << "\n";
         }
     }
@@ -594,19 +707,74 @@ void printPitchingLeaders(std::vector<PitcherAccum> vec, double minIP, int topN)
                   << std::setw(20) << "Pitcher"
                   << std::setw(5)  << "Tm"
                   << std::right
+                  << std::setw(5) << "GS"
+                  << std::setw(5) << "GR"
                   << std::setw(8) << "IP"
-                  << std::setw(6) << "W"
+                  << std::setw(5) << "W"
                   << std::setw(7) << "ERA"
+                  << std::setw(7) << "FIP"
+                  << std::setw(7) << "xFIP"
                   << std::setw(7) << "WHIP"
                   << std::setw(7) << "K/9"
-                  << "\n" << std::string(64, '-') << "\n";
+                  << std::setw(7) << "BB/9"
+                  << "\n" << std::string(94, '-') << "\n";
         int rk = 1;
         for (const auto& p : s) {
             if (rk > topN) break;
-            std::ostringstream ip, era, whip, k9;
+            std::ostringstream ip, era, fip, xfip, whip, k9, bb9;
             ip   << std::fixed << std::setprecision(1) << p.ip();
             era  << std::fixed << std::setprecision(2) << p.era();
+            fip  << std::fixed << std::setprecision(2) << p.fip();
+            xfip << std::fixed << std::setprecision(2) << p.xfip();
             whip << std::fixed << std::setprecision(2) << p.whip();
+            k9   << std::fixed << std::setprecision(1) << p.kPer9();
+            bb9  << std::fixed << std::setprecision(1) << p.bb9();
+            const std::string abbr = p.team.size() >= 3 ? p.team.substr(0, 3) : p.team;
+            std::cout << std::left  << std::setw(4) << rk++
+                      << std::setw(20) << p.name
+                      << std::setw(5)  << abbr
+                      << std::right
+                      << std::setw(5) << p.gamesStarted
+                      << std::setw(5) << p.gamesRelief()
+                      << std::setw(8) << ip.str()
+                      << std::setw(5) << p.wins
+                      << std::setw(7) << era.str()
+                      << std::setw(7) << fip.str()
+                      << std::setw(7) << xfip.str()
+                      << std::setw(7) << whip.str()
+                      << std::setw(7) << k9.str()
+                      << std::setw(7) << bb9.str()
+                      << "\n";
+        }
+    }
+
+    // FIP (IP フィルター)
+    {
+        auto s = vec;
+        s.erase(std::remove_if(s.begin(), s.end(),
+            [minIP](const PitcherAccum& p){ return p.ip() < minIP; }), s.end());
+        std::sort(s.begin(), s.end(), [](const PitcherAccum& a, const PitcherAccum& b){ return a.fip() < b.fip(); });
+        std::cout << "\n--- FIP ---\n"
+                  << std::left  << std::setw(4)  << "Rk"
+                  << std::setw(20) << "Pitcher"
+                  << std::setw(5)  << "Tm"
+                  << std::right
+                  << std::setw(8) << "IP"
+                  << std::setw(7) << "FIP"
+                  << std::setw(7) << "xFIP"
+                  << std::setw(7) << "ERA"
+                  << std::setw(7) << "K/9"
+                  << std::setw(5) << "HR"
+                  << "\n" << std::string(68, '-') << "\n";
+        int rk = 1;
+        for (const auto& p : s) {
+            if (rk > topN) break;
+            std::ostringstream ip, fip, xfip, era;
+            ip   << std::fixed << std::setprecision(1) << p.ip();
+            fip  << std::fixed << std::setprecision(2) << p.fip();
+            xfip << std::fixed << std::setprecision(2) << p.xfip();
+            era  << std::fixed << std::setprecision(2) << p.era();
+            std::ostringstream k9;
             k9   << std::fixed << std::setprecision(1) << p.kPer9();
             const std::string abbr = p.team.size() >= 3 ? p.team.substr(0, 3) : p.team;
             std::cout << std::left  << std::setw(4) << rk++
@@ -614,10 +782,11 @@ void printPitchingLeaders(std::vector<PitcherAccum> vec, double minIP, int topN)
                       << std::setw(5)  << abbr
                       << std::right
                       << std::setw(8) << ip.str()
-                      << std::setw(6) << p.wins
+                      << std::setw(7) << fip.str()
+                      << std::setw(7) << xfip.str()
                       << std::setw(7) << era.str()
-                      << std::setw(7) << whip.str()
                       << std::setw(7) << k9.str()
+                      << std::setw(5) << p.homeRunsAllowed
                       << "\n";
         }
     }
@@ -679,6 +848,43 @@ void printPitchingLeaders(std::vector<PitcherAccum> vec, double minIP, int topN)
                       << std::setw(5) << p.saves
                       << std::setw(5) << p.blownSaves
                       << std::setw(7) << era.str()
+                      << "\n";
+        }
+    }
+
+    // WHIP (IP フィルター)
+    {
+        auto s = vec;
+        s.erase(std::remove_if(s.begin(), s.end(),
+            [minIP](const PitcherAccum& p){ return p.ip() < minIP; }), s.end());
+        std::sort(s.begin(), s.end(), [](const PitcherAccum& a, const PitcherAccum& b){ return a.whip() < b.whip(); });
+        std::cout << "\n--- WHIP ---\n"
+                  << std::left  << std::setw(4)  << "Rk"
+                  << std::setw(20) << "Pitcher"
+                  << std::setw(5)  << "Tm"
+                  << std::right
+                  << std::setw(8) << "IP"
+                  << std::setw(7) << "WHIP"
+                  << std::setw(7) << "BB/9"
+                  << std::setw(7) << "K/9"
+                  << "\n" << std::string(58, '-') << "\n";
+        int rk = 1;
+        for (const auto& p : s) {
+            if (rk > topN) break;
+            std::ostringstream ip, whip, bb9, k9;
+            ip   << std::fixed << std::setprecision(1) << p.ip();
+            whip << std::fixed << std::setprecision(2) << p.whip();
+            bb9  << std::fixed << std::setprecision(1) << p.bb9();
+            k9   << std::fixed << std::setprecision(1) << p.kPer9();
+            const std::string abbr = p.team.size() >= 3 ? p.team.substr(0, 3) : p.team;
+            std::cout << std::left  << std::setw(4) << rk++
+                      << std::setw(20) << p.name
+                      << std::setw(5)  << abbr
+                      << std::right
+                      << std::setw(8) << ip.str()
+                      << std::setw(7) << whip.str()
+                      << std::setw(7) << bb9.str()
+                      << std::setw(7) << k9.str()
                       << "\n";
         }
     }
@@ -830,14 +1036,18 @@ void printPositionDefense(const std::map<std::string, PosDefMap>& posDefMap,
 int main(int argc, char* argv[]) {
     const int nSeasons = (argc >= 2) ? std::stoi(argv[1]) : 100;
 
-    std::cout << "Joji Baseball Engine v1.0 — Season Runner\n"
-              << nSeasons << " seasons  x  45 games  =  " << nSeasons * 45 << " total\n";
+    std::cout << "Joji Baseball Engine — 2-League Season Runner\n"
+              << "12 teams  |  96 games/team  |  " << nSeasons << " seasons\n"
+              << "League A: New York Metro   |  League B: Philadelphia Districts\n\n";
 
     auto teams = joji::allTeams();
     const int n = static_cast<int>(teams.size());
 
     std::vector<TeamAccum> acc(n);
-    for (int i = 0; i < n; ++i) acc[i].name = teams[i].name();
+    for (int i = 0; i < n; ++i) {
+        acc[i].name   = teams[i].name();
+        acc[i].league = teams[i].league();
+    }
 
     std::map<std::string, BatterAccum>      allBatters;
     std::map<std::string, PitcherAccum>     allPitchers;
@@ -847,8 +1057,8 @@ int main(int argc, char* argv[]) {
     std::map<std::string, int> championCount;
 
     uint32_t seed = 42;
-    const int    minPAperSeason = 80;
-    const double minIPperSeason = 25.0;
+    const int    minPAperSeason = 250;  // ~2.6 PA/game × 96 games
+    const double minIPperSeason = 60.0; // ~starter gets ~115 IP/season
 
     for (int s = 0; s < nSeasons; ++s) {
         std::map<std::string, BatterAccum>  seasonBatters;

@@ -295,13 +295,18 @@ double safeRate(int num, int den) {
 }
 
 std::string playerJson(const PlayerBoxScore& p, const std::string& indent) {
-    const int pa  = p.atBats + p.walks;
+    const int pa  = p.atBats + p.walks + p.hitByPitch + p.sacFlies;
     const double avg = safeRate(p.hits, p.atBats);
-    const double obp = safeRate(p.hits + p.walks, pa);
+    const double obp = safeRate(p.hits + p.walks + p.hitByPitch, pa > 0 ? pa : 1);
     const double slg = safeRate(p.totalBases, p.atBats);
+    // wOBA linear weights
+    const int singles = p.hits - p.doubles - p.triples - p.homeRuns;
+    const double wobaN = 0.690*p.walks + 0.720*p.hitByPitch + 0.888*singles
+                       + 1.271*p.doubles + 1.616*p.triples + 2.101*p.homeRuns;
+    const double woba  = pa > 0 ? wobaN / pa : 0.0;
 
     std::string s = indent + "{\n";
-    s += indent + "  " + q("name")       + ": " + q(p.name)                + ",\n";
+    s += indent + "  " + q("name")       + ": " + q(p.name)                    + ",\n";
     s += indent + "  " + q("atBats")     + ": " + std::to_string(p.atBats)     + ",\n";
     s += indent + "  " + q("hits")       + ": " + std::to_string(p.hits)       + ",\n";
     s += indent + "  " + q("doubles")    + ": " + std::to_string(p.doubles)    + ",\n";
@@ -311,11 +316,51 @@ std::string playerJson(const PlayerBoxScore& p, const std::string& indent) {
     s += indent + "  " + q("strikeouts") + ": " + std::to_string(p.strikeouts) + ",\n";
     s += indent + "  " + q("totalBases") + ": " + std::to_string(p.totalBases) + ",\n";
     s += indent + "  " + q("rbi")        + ": " + std::to_string(p.rbi)        + ",\n";
-    s += indent + "  " + q("avg")        + ": " + dbl(avg) + ",\n";
-    s += indent + "  " + q("obp")        + ": " + dbl(obp) + ",\n";
-    s += indent + "  " + q("slg")        + ": " + dbl(slg) + "\n";
+    s += indent + "  " + q("avg")        + ": " + dbl(avg)  + ",\n";
+    s += indent + "  " + q("obp")        + ": " + dbl(obp)  + ",\n";
+    s += indent + "  " + q("slg")        + ": " + dbl(slg)  + ",\n";
+    s += indent + "  " + q("ops")        + ": " + dbl(obp + slg) + ",\n";
+    s += indent + "  " + q("woba")       + ": " + dbl(woba) + "\n";
     s += indent + "}";
     return s;
+}
+
+std::string pitcherJson(const PitcherBoxScore& p, const std::string& indent) {
+    const double ip  = p.outsRecorded / 3.0;
+    const double era = ip > 0 ? p.earnedRuns * 9.0 / ip : 0.0;
+    const double whip = ip > 0 ? (p.walks + p.hitsAllowed) / ip : 0.0;
+    const double fip  = ip > 0
+        ? (13.0*p.homeRunsAllowed + 3.0*p.walks - 2.0*p.strikeouts) / ip + 3.10 : 0.0;
+
+    std::ostringstream ipStr;
+    ipStr << std::fixed << std::setprecision(1) << ip;
+
+    std::string s = indent + "{\n";
+    s += indent + "  " + q("name")          + ": " + q(p.name)                       + ",\n";
+    s += indent + "  " + q("wins")           + ": " + std::to_string(p.wins)  + ",\n";
+    s += indent + "  " + q("saves")          + ": " + std::to_string(p.saves) + ",\n";
+    s += indent + "  " + q("ip")            + ": " + ipStr.str()                     + ",\n";
+    s += indent + "  " + q("hitsAllowed")   + ": " + std::to_string(p.hitsAllowed)   + ",\n";
+    s += indent + "  " + q("earnedRuns")    + ": " + std::to_string(p.earnedRuns)    + ",\n";
+    s += indent + "  " + q("walks")         + ": " + std::to_string(p.walks)         + ",\n";
+    s += indent + "  " + q("strikeouts")    + ": " + std::to_string(p.strikeouts)    + ",\n";
+    s += indent + "  " + q("homeRuns")      + ": " + std::to_string(p.homeRunsAllowed) + ",\n";
+    s += indent + "  " + q("era")           + ": " + dbl(era)  + ",\n";
+    s += indent + "  " + q("whip")          + ": " + dbl(whip) + ",\n";
+    s += indent + "  " + q("fip")           + ": " + dbl(fip)  + "\n";
+    s += indent + "}";
+    return s;
+}
+
+std::string pitcherArrayJson(const std::vector<PitcherBoxScore>& pitchers,
+                              const std::string& indent) {
+    std::string s = "[\n";
+    for (std::size_t i = 0; i < pitchers.size(); ++i) {
+        s += pitcherJson(pitchers[i], indent + "  ");
+        if (i + 1 < pitchers.size()) s += ",";
+        s += "\n";
+    }
+    return s + indent + "]";
 }
 
 std::string playerArrayJson(const std::vector<PlayerBoxScore>& players,
@@ -345,8 +390,10 @@ std::string exportGameToJson(const GameEngine& engine) {
     s += "  " + q("awayLineScore") + ": " + intArray(engine.awayLineScore()) + ",\n";
     s += "  " + q("homeLineScore") + ": " + intArray(engine.homeLineScore()) + ",\n";
 
-    s += "  " + q("awayPlayerStats") + ": " + playerArrayJson(engine.awayPlayerStats(), "  ") + ",\n";
-    s += "  " + q("homePlayerStats") + ": " + playerArrayJson(engine.homePlayerStats(), "  ") + "\n";
+    s += "  " + q("awayPlayerStats")  + ": " + playerArrayJson(engine.awayPlayerStats(),   "  ") + ",\n";
+    s += "  " + q("homePlayerStats")  + ": " + playerArrayJson(engine.homePlayerStats(),   "  ") + ",\n";
+    s += "  " + q("awayPitcherStats") + ": " + pitcherArrayJson(engine.awayPitcherStats(), "  ") + ",\n";
+    s += "  " + q("homePitcherStats") + ": " + pitcherArrayJson(engine.homePitcherStats(), "  ") + "\n";
 
     s += "}\n";
     return s;
@@ -377,6 +424,38 @@ std::string exportAnimationPlanToJson(const AnimationPlan& plan) {
         + replayDecisionJson(plan.defensiveDecision, "  ") + ",\n";
     s += "  " + q("replayTimeline") + ": " + replayTimelineJson(plan.replayTimeline, "  ") + "\n";
     s += "}\n";
+    return s;
+}
+
+std::string exportSeasonSummaryToJson(const std::vector<TeamSeasonSummary>& teams,
+                                      const std::string& worldSeriesChampion,
+                                      int seasonNumber) {
+    std::string s = "{\n";
+    s += "  " + q("season")              + ": " + std::to_string(seasonNumber) + ",\n";
+    s += "  " + q("worldSeriesChampion") + ": " + q(worldSeriesChampion)       + ",\n";
+    s += "  " + q("teams") + ": [\n";
+    for (std::size_t i = 0; i < teams.size(); ++i) {
+        const auto& t = teams[i];
+        std::string ts = "    {\n";
+        ts += "      " + q("name")    + ": " + q(t.name)    + ",\n";
+        ts += "      " + q("league")  + ": " + q(t.league)  + ",\n";
+        ts += "      " + q("wins")    + ": " + std::to_string(t.wins)   + ",\n";
+        ts += "      " + q("losses")  + ": " + std::to_string(t.losses) + ",\n";
+        ts += "      " + q("rsPerG")  + ": " + dbl(t.rsPerG, 2)  + ",\n";
+        ts += "      " + q("raPerG")  + ": " + dbl(t.raPerG, 2)  + ",\n";
+        ts += "      " + q("teamEra") + ": " + dbl(t.teamEra, 2) + ",\n";
+        ts += "      " + q("ba")      + ": " + dbl(t.teamBa, 3)  + ",\n";
+        ts += "      " + q("obp")     + ": " + dbl(t.teamObp, 3) + ",\n";
+        ts += "      " + q("slg")     + ": " + dbl(t.teamSlg, 3) + ",\n";
+        ts += "      " + q("woba")    + ": " + dbl(t.teamWoba, 3)+ ",\n";
+        ts += "      " + q("kPct")    + ": " + dbl(t.kPct, 1)    + ",\n";
+        ts += "      " + q("bbPct")   + ": " + dbl(t.bbPct, 1)   + "\n";
+        ts += "    }";
+        s += ts;
+        if (i + 1 < teams.size()) s += ",";
+        s += "\n";
+    }
+    s += "  ]\n}\n";
     return s;
 }
 

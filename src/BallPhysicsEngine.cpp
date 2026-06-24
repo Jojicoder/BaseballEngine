@@ -334,6 +334,9 @@ void simulateBounceAndRoll(BattedBall& ball,
     double vx = velocity.x * (1.0 - LandFriction);
     double vy = velocity.y * (1.0 - LandFriction);
 
+    // ロール開始速度を記録 (ft/s)
+    ball.initialRollSpeed = std::sqrt(vx * vx + vy * vy) * FeetPerMeter;
+
     while (true) {
         const double speed = std::sqrt(vx * vx + vy * vy);
         if (speed <= RollStop) {

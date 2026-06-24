@@ -56,6 +56,8 @@ struct BattedBall {
     std::vector<Vector3> bounceTrajectory;
     Vector3 finalRestPoint;
     double groundRollDistance = 0.0;
+    double initialRollSpeed   = 0.0;  // ft/s — ball speed at start of rolling phase
+    double batterSpeedNorm    = 0.0;  // (batter.speed - 50) / 50 — for infield hit calc
     bool landsFair = false;
     bool crossesFence = false;
     bool isBunt = false;

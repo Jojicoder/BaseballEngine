@@ -47,8 +47,8 @@ ContactResult ContactEngine::resolve(const Player& batter,
     result.isUnderBall = result.verticalBatError > 0.52;
 
     const double protectBonus = count.strikes >= 2 ? 0.13 : 0.0;
-    const double contactChance = clamp(0.80 + contact * 0.30 - stuff * 0.11 - pitch.pitchQuality * 0.11
-                                           + swing.contactIntent * 0.16 + result.timingQuality * 0.17
+    const double contactChance = clamp(0.84 + contact * 0.30 - stuff * 0.11 - pitch.pitchQuality * 0.11
+                                           + swing.contactIntent * 0.16 + result.timingQuality * 0.14
                                            - locationError + protectBonus,
                                        0.11,
                                        0.97);

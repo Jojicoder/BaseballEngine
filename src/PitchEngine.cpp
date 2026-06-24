@@ -89,7 +89,7 @@ double scoreCandidate(
     const double powerAdj = clamp((batter.power       - 50) / 50.0, -0.8, 0.8);
 
     // High chase rate → off-zone pitches more effective (they'll bite)
-    if (chase) score += chaseAdj * 0.45 - eyeAdj * 0.25;
+    if (chase) score += chaseAdj * 0.45 - eyeAdj * 0.12;
 
     // Breaking balls are less effective vs batters who handle them well
     if (breaking) score -= cvbAdj * 0.35;
