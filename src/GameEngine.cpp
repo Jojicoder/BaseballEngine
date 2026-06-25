@@ -66,7 +66,12 @@ void applyPlayerStats(Fielder& fielder, const Player& player) {
     fielder.reactionSeconds  = clampValue(fielder.reactionSeconds - fieldingFactor * 0.035, 0.18, 0.65);
     fielder.fielding         = clampValue(fielder.fielding + fieldingFactor * 0.08, 0.62, 0.98);
     fielder.armStrength      *= armFactor;
-    fielder.routeEfficiency  = clampValue(fielder.routeEfficiency + fieldingFactor * 0.035, 0.78, 0.99);
+    fielder.routeEfficiency  = clampValue(fielder.routeEfficiency + fieldingFactor * 0.06, 0.78, 0.99);
+    // Outfielders: poor fielders misread initial ball direction → extra time before committing
+    const bool isOF = (fielder.position == FieldPosition::LeftField
+                    || fielder.position == FieldPosition::CenterField
+                    || fielder.position == FieldPosition::RightField);
+    fielder.flyReadDelay = isOF ? clampValue(0.18 - fielder.fielding * 0.20, 0.0, 0.10) : 0.0;
 }
 
 // fieldingForm を適用した Player コピーを返す

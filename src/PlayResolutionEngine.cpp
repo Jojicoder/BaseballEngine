@@ -306,7 +306,10 @@ FieldingAttempt evaluateFielding(const DefenseAlignment& defense,
                 }
             }
         }
-        const double t    = f.reactionSeconds + tMove + codPenalty;
+        // Fly read delay: outfielders with poor fielding misread the initial ball
+        // direction and take a beat before committing to the correct route.
+        const double t    = f.reactionSeconds + tMove + codPenalty
+                          + (isOutfielder ? f.flyReadDelay : 0.0);
         if (t < bestTravel) {
             bestTravel         = t;
             best.fielderId     = f.id;

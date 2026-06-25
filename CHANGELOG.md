@@ -1,5 +1,49 @@
 # Changelog
 
+## v2.3 - Batter Psychology, Pitch AI, Predictive Fielding Routes (2026-06-24)
+
+**Confirmed metrics (100-season average):**
+
+| Metric | v2.2 → v2.3 | MLB ref |
+|--------|-------------|---------|
+| K% | 22.8% → **22.1%** | 22-23% ✓ |
+| BB% | 7.5% → **7.3%** | ~8.5% |
+| BABIP | 0.300 → **0.297–0.300** | ~0.300 ✓ |
+| RS/G top | 4.74–4.85 → **4.60–4.75** | 4.5–5.5 ✓ |
+| RS/G bottom | 3.47–3.57 → **3.36–3.51** | ~3.5 |
+| ERA range | 3.60–4.32 → **3.44–4.24** | 3.5–4.5 ✓ |
+
+### Batter Psychology — SwingDecisionEngine
+
+- **2-strike plate protection scales with contact stat**: high-contact batters expand their zone more when protecting the plate (up to `+0.11` out-of-zone swing probability), low-contact batters get minimal benefit (`+0.02`)
+- Previously: flat `+0.02` for all batters on out-of-zone 2-strike pitches
+- Effect: elite contact hitters (contact ≥70) distinguish themselves in two-strike counts
+
+### Pitch AI — PitchEngine
+
+- **3-0 count separate branch**: strong zone/fastball bias (`inZone +0.9`, `fastball+inZone +0.5`, `chase -2.0`) vs. generic `balls≥3` which applies to 3-1/3-2 as well
+- **0-0 first pitch bonus**: fastball+zone gets `+0.25` on first pitch — establishes early strike count
+- **armDrag 3D spin axis**: `armDrag = clamp((55 − control) / 60, 0, 0.42)` — low-control pitchers have more gyro spin (spinAxisY) from arm-slot deviation, activating SSW batted ball effect per pitch type:
+  - Fastball: `spinAxisY = armDrag × 0.18`
+  - Slider: `spinAxisY = 0.15 + armDrag × 0.22`
+  - Changeup: `spinAxisY = 0.22 + armDrag × 0.28`
+  - Splitter: `spinAxisY = 0.28 + armDrag × 0.18`
+- Spin axis renormalized to unit vector after adding gyro component
+
+### Predictive Fielding Routes — PlayResolutionEngine + GameEngine
+
+- **routeEfficiency coefficient widened**: `0.035 → 0.06` — spread between best/worst fielders increases from ~5% to ~9%
+  - fielding=80: routeEfficiency ~0.936 vs previous ~0.921
+  - fielding=20: routeEfficiency ~0.864 vs previous ~0.879
+- **flyReadDelay for outfielders**: poor outfielders pay extra time from misreading initial ball direction
+  - `flyReadDelay = clamp(0.18 − fielding_stat × 0.20, 0.0, 0.10)`
+  - fielding ≥ 0.90: no delay (reads ball immediately)
+  - fielding = 0.75: ~0.03s delay
+  - fielding = 0.62: ~0.056s delay
+  - Applied only to outfielders in `evaluateFielding`
+
+---
+
 ## v2.2 - Multithreading, CoD Penalty, SSW, RISP AI, Team Rebalance (2026-06-24)
 
 **Confirmed metrics (100-season average):**

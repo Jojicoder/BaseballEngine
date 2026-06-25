@@ -36,7 +36,12 @@ SwingDecision SwingDecisionEngine::decide(const Player& batter, const Pitch& pit
     double probability = zone ? 0.43 : (chase ? 0.12 : 0.04);
     probability += contact * 0.09;
     probability -= eye * (zone ? 0.03 : 0.20);
-    probability += count.strikes >= 2 ? (zone ? 0.18 : 0.02) : 0.0;
+    // 2-strike plate protection: high-contact batters expand their zone more when
+    // protecting the plate — they can handle borderline pitches that poor-contact
+    // batters foul off or miss. Scales from 0.02 (poor contact) to 0.11 (elite).
+    const double strikeProtect = count.strikes >= 2
+        ? std::clamp(contact * 0.08 + 0.04, 0.02, 0.11) : 0.0;
+    probability += count.strikes >= 2 ? (zone ? 0.18 : strikeProtect) : 0.0;
     probability -= count.balls >= 3 ? (zone ? 0.16 : 0.42) : 0.0;
     probability += pitch.pitchQuality > 0.72 ? -0.06 : 0.0;
     if (chase) probability += handednessChase;

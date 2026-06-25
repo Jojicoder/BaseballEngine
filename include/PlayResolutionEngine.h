@@ -43,6 +43,7 @@ struct Fielder {
     double armStrength = 40.0;
     double routeEfficiency = 0.9;
     double accelerationFeetPerSecond2 = 13.0; // ramp-up; typical fielder ≈13 ft/s²
+    double flyReadDelay = 0.0;   // outfielder extra delay for misreading initial ball direction
 };
 
 struct DefenseAlignment {

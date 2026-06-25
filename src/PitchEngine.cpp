@@ -61,11 +61,17 @@ double scoreCandidate(
     double score = (grade - 50) / 50.0 * 0.40;
 
     // ── Count ────────────────────────────────────────────────────────────
-    if (count.balls >= 3) {
-        // Must throw a strike — chase pitches are walk danger
+    if (count.balls == 3 && count.strikes == 0) {
+        // 3-0: strong zone preference, fastball first — walk is costly
+        if (chase)              score -= 2.0;
+        if (inZone)             score += 0.9;
+        if (fastball && inZone) score += 0.5;
+        if (heart)              score += 0.3;
+    } else if (count.balls >= 3) {
+        // 3-1, 3-2: still need a strike, but off-speed is usable
         if (chase)  score -= 1.8;
         if (inZone) score += 0.9;
-        if (heart)  score += 0.4; // even center zone is OK here
+        if (heart)  score += 0.4;
         if (fastball && inZone) score += 0.3;
     } else if (count.strikes >= 2 && count.balls <= 1) {
         // Pitcher's count — expand zone, can waste a pitch
@@ -79,6 +85,8 @@ double scoreCandidate(
     } else {
         // Neutral count — slight preference for quality strike locations
         if (inZone && !heart) score += 0.2;
+        // 0-0 first pitch: establish fastball strike, set the tone early
+        if (count.balls == 0 && count.strikes == 0 && fastball && inZone) score += 0.25;
     }
 
     // ── Batter tendencies ────────────────────────────────────────────────
@@ -148,49 +156,61 @@ double velocityFor(PitchType type, const Player& pitcher, Random& random) {
 
 void applySpinParams(Pitch& pitch, double handSign, const Player& pitcher, Random& random) {
     const double stuff = clamp((pitcher.pitchingStuff - 50) / 50.0, -0.8, 0.8);
+    // armDrag: pitchers with lower control have more gyro spin from arm-slot deviation.
+    // This makes SSW (seam-shift wake) more unpredictable on their pitches.
+    const double armDrag = clamp((55.0 - pitcher.pitchingControl) / 60.0, 0.0, 0.42);
     switch (pitch.pitchType) {
         case PitchType::Fastball:
-            pitch.movementX = random.real(-3.0, 3.0);
-            pitch.movementZ = random.real(7.0, 15.0) + stuff * 3.0;
-            pitch.spinRate  = random.real(2050.0, 2550.0);
-            pitch.spinAxisX = -0.97;  pitch.spinAxisZ = 0.26 * handSign;
+            pitch.movementX  = random.real(-3.0, 3.0);
+            pitch.movementZ  = random.real(7.0, 15.0) + stuff * 3.0;
+            pitch.spinRate   = random.real(2050.0, 2550.0);
+            pitch.spinAxisX  = -0.97; pitch.spinAxisY = armDrag * 0.18;        pitch.spinAxisZ = 0.26 * handSign;
             pitch.activeSpin = 0.93;
             break;
         case PitchType::Slider:
-            pitch.movementX = handSign * random.real(5.0, 14.0);
-            pitch.movementZ = random.real(-2.0, 5.0);
-            pitch.spinRate  = random.real(2250.0, 2900.0);
-            pitch.spinAxisX = 0.25;   pitch.spinAxisZ = 0.97 * handSign;
+            pitch.movementX  = handSign * random.real(5.0, 14.0);
+            pitch.movementZ  = random.real(-2.0, 5.0);
+            pitch.spinRate   = random.real(2250.0, 2900.0);
+            pitch.spinAxisX  = 0.25;  pitch.spinAxisY = 0.15 + armDrag * 0.22; pitch.spinAxisZ = 0.97 * handSign;
             pitch.activeSpin = 0.35;
             break;
         case PitchType::Curveball:
-            pitch.movementX = handSign * random.real(-5.0, 5.0);
-            pitch.movementZ = random.real(-16.0, -7.0);
-            pitch.spinRate  = random.real(2350.0, 3050.0);
-            pitch.spinAxisX = 0.97;   pitch.spinAxisZ = -0.26 * handSign;
+            pitch.movementX  = handSign * random.real(-5.0, 5.0);
+            pitch.movementZ  = random.real(-16.0, -7.0);
+            pitch.spinRate   = random.real(2350.0, 3050.0);
+            pitch.spinAxisX  = 0.97;  pitch.spinAxisY = armDrag * 0.22;        pitch.spinAxisZ = -0.26 * handSign;
             pitch.activeSpin = 0.90;
             break;
         case PitchType::Changeup:
-            pitch.movementX = handSign * random.real(-7.0, 5.0);
-            pitch.movementZ = random.real(0.0, 8.0);
-            pitch.spinRate  = random.real(1500.0, 2100.0);
-            pitch.spinAxisX = -0.92;  pitch.spinAxisZ = 0.40 * handSign;
+            pitch.movementX  = handSign * random.real(-7.0, 5.0);
+            pitch.movementZ  = random.real(0.0, 8.0);
+            pitch.spinRate   = random.real(1500.0, 2100.0);
+            pitch.spinAxisX  = -0.92; pitch.spinAxisY = 0.22 + armDrag * 0.28; pitch.spinAxisZ = 0.40 * handSign;
             pitch.activeSpin = 0.70;
             break;
         case PitchType::Cutter:
-            pitch.movementX = handSign * random.real(2.0, 8.0);
-            pitch.movementZ = random.real(4.0, 11.0);
-            pitch.spinRate  = random.real(2200.0, 2750.0);
-            pitch.spinAxisX = -0.87;  pitch.spinAxisZ = -0.50 * handSign;
+            pitch.movementX  = handSign * random.real(2.0, 8.0);
+            pitch.movementZ  = random.real(4.0, 11.0);
+            pitch.spinRate   = random.real(2200.0, 2750.0);
+            pitch.spinAxisX  = -0.87; pitch.spinAxisY = 0.10 + armDrag * 0.25; pitch.spinAxisZ = -0.50 * handSign;
             pitch.activeSpin = 0.50;
             break;
         case PitchType::Splitter:
-            pitch.movementX = handSign * random.real(-4.0, 4.0);
-            pitch.movementZ = random.real(-9.0, -2.0);
-            pitch.spinRate  = random.real(1200.0, 1800.0);
-            pitch.spinAxisX = 0.60;   pitch.spinAxisZ = 0.0;
+            pitch.movementX  = handSign * random.real(-4.0, 4.0);
+            pitch.movementZ  = random.real(-9.0, -2.0);
+            pitch.spinRate   = random.real(1200.0, 1800.0);
+            pitch.spinAxisX  = 0.60;  pitch.spinAxisY = 0.28 + armDrag * 0.18; pitch.spinAxisZ = 0.0;
             pitch.activeSpin = 0.25;
             break;
+    }
+    // Renormalize to unit vector after adding gyro (spinAxisY) component
+    const double len = std::sqrt(pitch.spinAxisX * pitch.spinAxisX
+                               + pitch.spinAxisY * pitch.spinAxisY
+                               + pitch.spinAxisZ * pitch.spinAxisZ);
+    if (len > 0.01) {
+        pitch.spinAxisX /= len;
+        pitch.spinAxisY /= len;
+        pitch.spinAxisZ /= len;
     }
 }
 
