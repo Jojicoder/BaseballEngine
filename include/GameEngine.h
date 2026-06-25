@@ -59,6 +59,8 @@ public:
     void simulate(std::ostream& out);
     // 連投疲労マップ: pitcher name → 前回登板からの休養日数 (0=前日登板)
     void setFatigueMap(std::map<std::string, int> daysSinceLastPitch);
+    // Hot/Cold ストリーク: player name → contact 補正値 (-5〜+5)
+    void setStreakMap(std::map<std::string, double> streaks);
     // Fast mode: double physics timestep + skip trajectory recording (season sim only)
     void setFastMode(bool fast) { fastMode_ = fast; }
 
@@ -155,6 +157,8 @@ private:
     void considerPitcherChange();
     void tryPitcherChange();
     void considerPinchHitter();
+    void considerPinchRunner();
+    void considerDefensiveReplacement();
     bool considerIntentionalWalk();
     void changePitcher(const Player& newPitcher, std::size_t bullpenIndex);
     void initPitcherSit();
@@ -235,12 +239,21 @@ private:
     // 現在投手の球種別球数 (投手交代でリセット)
     std::map<std::string, int> currentPitcherArsenal_;
 
+    // 現在投手対各打者の打席数 (投手交代でリセット) — time-through-order 用
+    std::unordered_map<std::string, int> currentPitcherABsVsBatter_;
+
     // 先発 W 資格: 5 回以上投げてリードで降板したとき true
     bool awayStarterPotentialWin_ = false;
     bool homeStarterPotentialWin_ = false;
 
     // 連投疲労マップ: pitcher name → 前回登板からの休養日数 (0=前日登板)
     std::map<std::string, int> fatigueMap_;
+
+    // Hot/Cold ストリーク: player name → contact 補正値 (-5〜+5)
+    std::map<std::string, double> streakMap_;
+
+    // 試合内打者傾向メモリ: batter name → 前打席の chase/whiff 記録
+    std::unordered_map<std::string, BatterHistory> batterHistory_;
 
     // 1球ずつモード用
     AtBatState currentAtBat_;

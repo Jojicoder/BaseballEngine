@@ -5,8 +5,9 @@
 namespace joji {
 
 struct UmpireProfile {
-    double horizBias = 0.0; // + = wider zone horizontally
-    double vertBias  = 0.0; // + = higher zone top
+    double horizBias   = 0.0; // + = wider zone horizontally
+    double vertBias    = 0.0; // + = higher zone top
+    double framingBias = 0.0; // > 0 = elite framer expands effective strike zone
 };
 
 class ZoneJudge {

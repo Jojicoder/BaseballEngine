@@ -40,6 +40,7 @@ public:
     const std::vector<bool>& usedBench() const;
     bool hasBenchPlayer() const;
     void sendPinchHitter(std::size_t benchIndex, std::size_t lineupIndex);
+    void sendPinchRunner(std::size_t benchIndex, std::size_t lineupIndex);
 
 private:
     std::string name_;

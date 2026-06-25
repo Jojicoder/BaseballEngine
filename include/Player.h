@@ -110,6 +110,7 @@ struct Player {
     int highBallHitter     = 50; // >50 = strong on high pitches
     int chaseRate          = 50; // >50 = chases off-zone pitches more
     int contactVsBreaking  = 50; // >50 = handles breaking balls well
+    int clutchRating       = 50; // >50 = performs better in high-leverage situations
 
     // Roster role — set after construction via withRole(); used for trade valuation
     PlayerRole role = PlayerRole::ContactHitter;

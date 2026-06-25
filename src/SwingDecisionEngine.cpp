@@ -31,7 +31,7 @@ SwingDecision SwingDecisionEngine::decide(const Player& batter, const Pitch& pit
     // Opposite:    ball breaks back in → batter reads it better, chases less
     const bool sameHanded = (pitcherHand == ThrowingHand::Right && batter.battingSide == BattingSide::Right)
                          || (pitcherHand == ThrowingHand::Left  && batter.battingSide == BattingSide::Left);
-    const double handednessChase = sameHanded ? 0.05 : -0.04;
+    const double handednessChase = sameHanded ? 0.07 : -0.06;
 
     double probability = zone ? 0.43 : (chase ? 0.12 : 0.04);
     probability += contact * 0.09;

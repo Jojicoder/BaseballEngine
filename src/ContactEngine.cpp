@@ -28,7 +28,13 @@ ContactResult ContactEngine::resolve(const Player& batter,
     // Opposite:    platoon advantage → slight barrel bonus
     const bool sameHanded = (pitcher.throwingHand == ThrowingHand::Right && batter.battingSide == BattingSide::Right)
                          || (pitcher.throwingHand == ThrowingHand::Left  && batter.battingSide == BattingSide::Left);
-    const double barrelHandedness = sameHanded ? -0.06 : 0.05;
+    const double barrelHandedness = sameHanded ? -0.10 : 0.08;
+    // Platoon effect also reduces contact chance: same-hand matchup → harder contact
+    const double handednessContactAdj = sameHanded ? -0.035 : 0.025;
+
+    // GB/FB pitcher tendency: high control + relatively lower velocity = sinker/location pitch
+    // → batters top the ball more (grounders). High velocity + lower control = elevated contact.
+    const double pitcherGbBias = clamp((pitcher.pitchingControl - pitcher.pitchingVelocity) / 60.0, -0.60, 0.60);
 
     result.timingQuality = clamp(1.0 - std::abs(swing.timingError) * 3.6, 0.0, 1.0);
     result.verticalBatError = pitch.locationZ - (2.45 + swing.attackAngle * 0.018) + random.real(-0.22, 0.22);
@@ -49,7 +55,7 @@ ContactResult ContactEngine::resolve(const Player& batter,
     const double protectBonus = count.strikes >= 2 ? 0.13 : 0.0;
     const double contactChance = clamp(0.845 + contact * 0.30 - stuff * 0.10 - pitch.pitchQuality * 0.10
                                            + swing.contactIntent * 0.16 + result.timingQuality * 0.16
-                                           - locationError + protectBonus,
+                                           - locationError + protectBonus + handednessContactAdj,
                                        0.11,
                                        0.97);
     if (!random.chance(contactChance)) {
@@ -142,7 +148,9 @@ ContactResult ContactEngine::resolve(const Player& batter,
     if (!isBarrel && input.launchAngle >= 5.0 && input.launchAngle < 35.0) {
         if (contactQuality < 0.45) {
             // Poor contact: topped/jammed → grounder dominant
-            const double gbRate = clamp(0.52 + (0.45 - contactQuality) * 1.50, 0.52, 0.86);
+            const double gbRate = clamp(0.52 + (0.45 - contactQuality) * 1.50
+                                            + pitcherGbBias * 0.10,
+                                        0.52, 0.86);
             if (random.chance(gbRate)) {
                 input.launchAngle  = random.real(-4.0, 5.0);
                 input.exitVelocity = clamp(input.exitVelocity - random.real(3.0, 9.0), 35.0, 110.0);
@@ -157,7 +165,8 @@ ContactResult ContactEngine::resolve(const Player& batter,
             // Medium contact: grounder OR fly — avoid 8-27° soft liner zone entirely.
             const double gbRate = clamp(0.46 + (1.0 - contactQuality) * 0.30
                                             + (count.strikes >= 2 ? 0.05 : 0.0)
-                                            - power * 0.06 - contact * 0.06,
+                                            - power * 0.06 - contact * 0.06
+                                            + pitcherGbBias * 0.14,
                                         0.22, 0.62);
             if (random.chance(gbRate)) {
                 input.launchAngle  = random.real(-4.0, 4.5);
@@ -177,7 +186,8 @@ ContactResult ContactEngine::resolve(const Player& batter,
                 input.exitVelocity = clamp(input.exitVelocity - random.real(0.0, 5.0), 45.0, 98.0);
             } else {
                 const double gbRate2 = clamp(0.30 + (1.0 - contactQuality) * 0.20
-                                                 - contact * 0.05, 0.10, 0.40);
+                                                 - contact * 0.05
+                                                 + pitcherGbBias * 0.10, 0.10, 0.40);
                 if (random.chance(gbRate2)) {
                     input.launchAngle = random.real(-8.0, 5.0);
                 } else {

@@ -28,7 +28,8 @@ public:
     AtBatResult simulatePlateAppearance(const Player& batter,
                                         const Player& pitcher,
                                         Random& random,
-                                        bool buntIntent = false) const;
+                                        bool buntIntent = false,
+                                        const std::optional<BatterHistory>& history = std::nullopt) const;
 
     // 1球ずつモード
     AtBatState startAtBat(const Player& batter, const Player& pitcher) const;
@@ -39,7 +40,9 @@ private:
                            const Player& pitcher,
                            const Count& count,
                            int pitchNumber,
-                           Random& random) const;
+                           const std::optional<BatterHistory>& history,
+                           Random& random,
+                           const std::optional<Pitch>& lastPitch = std::nullopt) const;
 
     BallPhysicsEngine physicsEngine_;
     PitchEngine pitchEngine_;

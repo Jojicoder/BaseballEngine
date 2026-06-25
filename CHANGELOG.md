@@ -1,5 +1,189 @@
 # Changelog
 
+## v2.8 - Engine Polish: SBA/G 1.0, streakMap wiring, ERA audit (2026-06-25)
+
+**Confirmed metrics (100-season average):**
+
+| Metric | v2.7 → v2.8 | MLB ref |
+|--------|-------------|---------|
+| K% | 21.5% → **21.5%** | ~22% ✓ |
+| BB% | 8.3% → **8.3%** | ~8.5% ✓ |
+| BA | .259 → **.259** | ~.255 ✓ |
+| BABIP | 0.297 → **0.297** | ~0.300 ✓ |
+| SBA/G | ~0.66 → **~1.00** | ~1.0 ✓ |
+| SB% | 79% → **79%** | ~79% ✓ |
+
+### 盗塁試図率 (SBA/G) 改善 — `checkStolenBase()`
+- 1B→2B: `0.066 * situMult` → `0.100 * situMult` (+52%)
+- 2B→3B: `0.033 * situMult` → `0.050 * situMult` (+52%)
+- Double steal: `0.039 * situMult` → `0.060 * situMult` (+54%)
+- SB%は 79% を維持 (成功率は変更なし、試図判断のみ積極化)
+
+### Hot/Cold ストリーク → season runner 配線 — `season_runner.cpp`
+- `recentPerf` マップ: 選手ごとに直近4試合の (hits, atBats) を rolling で管理
+- 毎試合開始前に両チームの streakMap を合算し `engine.setStreakMap()` で注入
+- 基準打率 .260 から ±0.050 ごとに ±4 contact 補正 (clamp -5〜+5)
+- 不振が続く打者は当面成績が落ち、好調打者は勢いが継続する
+
+### ERA 分布確認
+- 先発 top ERA: 2.94〜3.20 (エース水準 ✓)
+- クローザー ERA: 3.61〜4.34 (セーブ状況での登板 ✓)
+- WHIP 1.20〜1.26 (MLB 参考 ~1.20〜1.35 ✓)
+- K/9 8.3〜9.1 (先発); BB/9 2.4〜2.8 (MLB 参考 ✓)
+
+---
+
+## v2.7 - Streaks, 2-Strike Approach, Warmup, Wind, Tunneling, DP, Squeeze, Pinch Runner, Defensive Replacement (2026-06-25)
+
+**Confirmed metrics (100-season average):**
+
+| Metric | v2.6 → v2.7 | MLB ref |
+|--------|-------------|---------|
+| K% | 21.8% → **21.5%** | ~22% ✓ |
+| BB% | 8.3% → **8.3%** | ~8.5% ✓ |
+| BA | .256 → **.259** | ~.255 ✓ |
+| BABIP | 0.294 → **0.297** | ~0.300 ✓ |
+| RS/G range | 3.26–4.98 → **3.30–5.13** | 3.5–5.5 ✓ |
+
+### Hot/Cold ストリーク — `GameEngine::setStreakMap()` + `formedBatter()`
+- 外部から `std::map<string, double>` で選手ごとの contact 補正値 (±5) を注入
+- `formedBatter()` 内で lookup し contact/eye を加算 — シーズンランナーと統合可能
+
+### 2ストライクアプローチ — `AtBatEngine::simulatePitch()`
+- 2ストライク時: `decisionBatter.contact +2` / `power -3` を swing decision 前に適用
+- 打者が三振を避けてコンタクト重視にシフト、ゾーン内の swing 確率が上昇
+
+### リリーフウォームアップペナルティ — `effectivePitcher()`
+- リリーフ投手の初登板 `pitchCount==0` 時: velocity -2 / control -4 / stuff -3
+- 冷えた状態での初打者でリアルなワイルドピッチリスク増加
+
+### 試合ごとランダム風 — `GameEngine` コンストラクタ
+- 65% 確率で 3〜14 mph のランダムな風 (方向 0〜360°) を `BallparkConfig` に設定
+- 試合ごとに外野打球の飛距離が異なる物理シミュレーションに
+
+### ピッチトンネリング — `AtBatEngine::simulatePitch()`
+- 前球と同方向に見えるコンボ (FB+Cutter/Changeup/Splitter, Slider+Curveball, Cutter+Slider) を検出
+- トンネルペア成立時: `decisionBatter.eye -3` — 打者の球種判断が遅れ chase 増加
+
+### DP率に走者速度を反映 — `simulateHalfInning()`
+- `dpChance = clamp(0.32 − (speed−60)×0.004, 0.14, 0.46)` — 足の速い走者は崩しやすい
+- 1塁走者の `speed` を打順から検索して適用
+
+### スクイズプレー — バント判定 (両モード)
+- R3B + 1死以下 + 1点差以内: コンタクト低い打者 0.22 / 高い打者 0.08 の確率でスクイズ
+- step-by-step と batch 両方のバント確率ロジックに追加
+
+### 代走 AI — `considerPinchRunner()`
+- 7回以降 / 2点差以内 / 速度<58 の走者が 1・2塁に → 速度>74 のベンチ選手と交代
+- `Team::sendPinchRunner()` 実装済み (sendPinchHitter と同パターン)
+
+### 守備固め AI — `considerDefensiveReplacement()`
+- 8回以降 / 1〜2点リード / 守備力最低の野手 (fielding<82%) を守備スペシャリスト (+8 以上) と交代
+
+---
+
+## v2.6 - Velocity Fade, TTO, Catcher Framing, Clutch Stat, BABIP Fix (2026-06-25)
+
+**Confirmed metrics (100-season average):**
+
+| Metric | v2.5 → v2.6 | MLB ref |
+|--------|-------------|---------|
+| K% | 21.9% → **21.8%** | ~22% ✓ |
+| BB% | 8.4% → **8.3%** | ~8.5% ✓ |
+| BA | .255 → **.256** | ~.255 ✓ |
+| BABIP | 0.294 → **0.294** | ~0.300 ✓ |
+| RS/G range | 3.18–4.91 → **3.26–4.98** | 3.5–5.5 ✓ |
+| BABIP range | — → **0.289–0.301** (team) | team spread ✓ |
+| Jake Ford ERA | — → **3.08** | ace-level ✓ |
+
+### 先発 Velocity Fade — GameEngine `effectivePitcher()`
+
+- スタミナ補正とは独立したフェード: 45球以降に球数ベースで球速低下
+- `fadeUnits = clamp((count−45)/55×9, 0, 9)` — 先発のみ適用
+- 100球時点で最大9ユニット低下 ≈ 約1.4 mph
+- 先発の球速が序盤と終盤で異なりリアリティ向上
+
+### 打順周回ペナルティ (TTO) — GameEngine `formedBatter()` + `changePitcher()`
+
+- `currentPitcherABsVsBatter_`: 現投手対各打者の打席数マップ (投手交代でリセット)
+- 2打席目: contact/eye +1; 3打席目以降: +3
+- 投手が同じ打者を複数回対戦するほど不利になる — 先発の打数管理がより重要に
+
+### キャッチャーフレーミング — ZoneJudge + GameEngine `initHalfInning()`
+
+- `UmpireProfile` に `framingBias` を追加
+- `ZoneJudge::judge()`: `xLimit = 0.73 + horizBias + framingBias`
+- 各半イニング開始時に守備側捕手の `fielding` から計算
+- `framingBias = clamp((catcher.fielding − 0.83) × 0.25, −0.04, +0.06)`
+- 捕手 fielding 0.95 で約 +0.030 幅拡大、0.75 で約 −0.020 幅縮小
+
+### クラッチ stat — Player + GameEngine `formedBatter()`
+
+- `Player::clutchRating` (int, default=50) を追加
+- 7回以降接戦 (±1点以内) or 2死RISP 時のみ発動
+- `clutchFactor = (clutchRating − 50) / 50.0` → contact/eye/power 補正
+- 12球団の主要選手 (leadoff + power hitter) に個別値を設定
+  - 例: Joji Rivera +68 (clutch leadoff), Dre Moss 38 (presses in big spots)
+
+### BABIP 微調整 — PlayResolutionEngine diving catch
+
+- ダイブ確率の上限を 0.40 → 0.36 に微減
+- チーム別 BABIP スプレッドが 0.289–0.301 に改善 (強チームほど高 BABIP)
+
+## v2.5 - GB/FB Types, Platoon+, Pitch Memory, Diving Catch, Route Optimization (2026-06-24)
+
+**Confirmed metrics (100-season average):**
+
+| Metric | v2.4 → v2.5 | MLB ref |
+|--------|-------------|---------|
+| K% | 21.6% → **21.9%** | ~22% ✓ |
+| BB% | 8.2% → **8.4%** | ~8.5% ✓ |
+| BA | .256 → **.255** | ~.255 ✓ |
+| BABIP | 0.296 → **0.294** | ~0.300 ✓ |
+| RS/G top | 4.74–4.88 → **4.80–4.91** | 4.5–5.5 ✓ |
+| RS/G bottom | 3.37–3.55 → **3.18–3.31** | ~3.5 ✓ |
+
+### GB/FB Pitcher Type — ContactEngine
+
+- `pitcherGbBias = clamp((pitchingControl − pitchingVelocity) / 60, −0.60, +0.60)`
+- High control + relatively low velocity = ground ball pitcher (location-based approach, batters top the ball)
+- High velocity + lower control = fly ball pitcher (elevated/middle-zone contact)
+- Applied to `gbRate` in all three BIP-shaping zones: ×0.10 (poor contact), ×0.14 (medium), ×0.10 (good)
+- No new Player fields needed — derived from existing stats
+
+### Platoon Split Enhancement — ContactEngine + SwingDecisionEngine
+
+- `barrelHandedness` coefficient: `−0.06/+0.05` → `−0.10/+0.08`
+- Added `handednessContactAdj` to `contactChance` formula: same-hand `−0.035`, opposite `+0.025`
+- `handednessChase` in SwingDecisionEngine: `0.05/−0.04` → `0.07/−0.06`
+- Effect: same-handed pitcher→batter matchup now meaningfully reduces barrel quality and contact chance
+
+### Cross-At-Bat Pitch Sequence Memory — AtBatTypes / PitchEngine / GameEngine
+
+- New `BatterHistory` struct: per-pitch-type chase counts, whiff counts, totalPitches
+- Added to `AtBatState`; `GameEngine` populates it before each at-bat from per-batter history map
+- `PitchEngine::generate()` and `scoreCandidate()` now accept `std::optional<BatterHistory>`
+- If batter chased this pitch type in a prior AB: `+0.18` to selection score
+- If batter whiffed on this pitch type: `+0.12`
+- If batter laid off a chase pitch type (zero chases after 4+ pitches): `−0.10`
+- Effect: pitchers exploit in-game tendencies — slider-chaser faces more sliders in later ABs
+
+### Diving Catch — PlayResolutionEngine
+
+- Outfield fly balls where fielder misses by ≤0.38 s → diving catch attempt
+- `diveChance = fielding × (0.38 − gap) / 0.38 × 0.40`
+- Example: elite OF (fielding=0.95) missing by 0.10 s → ~24% dive success
+- Effect: BABIP slightly reduced (0.296 → 0.294), elite OFs now make highlight-reel plays
+
+### 走塁ルート最適化 — GameEngine `runnerTravelSeconds`
+
+- Turn penalty at intermediate bases (1B→3B, 1B→Home etc.) is now speed-dependent
+- `spdNorm = (speed − 50) / 50`, `turnPenalty = clamp(0.16 − spdNorm × 0.07, 0.08, 0.25)`
+- speed=90 → **0.09 s/turn** (banana turn, maintains momentum); speed=50 → 0.16 s/turn (unchanged); speed=30 → **0.22 s/turn** (square turn, re-accelerates)
+- Effect: elite baserunners save ~0.07 s per intermediate turn → triggers more XBT attempts and higher safe rate on close plays; XBT/G range: fast teams 0.59, slow teams 0.47
+
+---
+
 ## v2.4 - BB% Fix, Breaking Ball Fatigue, Batter-Specific Approach (2026-06-24)
 
 **Confirmed metrics (100-season average):**

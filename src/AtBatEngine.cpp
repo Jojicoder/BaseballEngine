@@ -95,9 +95,11 @@ PlayResult AtBatEngine::simulate(const Player& batter, const Player& pitcher, Ra
 AtBatResult AtBatEngine::simulatePlateAppearance(const Player& batter,
                                                  const Player& pitcher,
                                                  Random& random,
-                                                 bool buntIntent) const {
+                                                 bool buntIntent,
+                                                 const std::optional<BatterHistory>& history) const {
     AtBatState state = startAtBat(batter, pitcher);
     state.buntIntent = buntIntent;
+    state.batterHistory = history;
     while (!simulateNextPitch(state, random)) {}
 
     AtBatResult result;
@@ -127,7 +129,7 @@ bool AtBatEngine::simulateNextPitch(AtBatState& state, Random& random) const {
         PitchLog log;
         log.pitchNumber = state.pitchNumber;
         log.countBefore = state.count;
-        log.pitch = pitchEngine_.generate(state.pitcher, state.batter, state.count, state.lastPitch, random);
+        log.pitch = pitchEngine_.generate(state.pitcher, state.batter, state.count, state.lastPitch, state.batterHistory, random);
 
         const double contact = clamp((state.batter.contact - 50) / 50.0, -0.8, 0.8);
         const double pitchQuality = clamp(log.pitch.pitchQuality, 0.0, 1.0);
@@ -227,7 +229,7 @@ bool AtBatEngine::simulateNextPitch(AtBatState& state, Random& random) const {
     }
     // ──────────────────────────────────────────────────────────────────────
 
-    PitchLog log = simulatePitch(state.batter, state.pitcher, state.count, state.pitchNumber, random);
+    PitchLog log = simulatePitch(state.batter, state.pitcher, state.count, state.pitchNumber, state.batterHistory, random, state.lastPitch);
     state.count = log.countAfter;
     state.lastPitch = log.pitch;
     state.pitchLogs.push_back(log);
@@ -258,12 +260,41 @@ PitchLog AtBatEngine::simulatePitch(const Player& batter,
                                     const Player& pitcher,
                                     const Count& count,
                                     int pitchNumber,
-                                    Random& random) const {
+                                    const std::optional<BatterHistory>& history,
+                                    Random& random,
+                                    const std::optional<Pitch>& lastPitch) const {
     PitchLog log;
     log.pitchNumber = pitchNumber;
     log.countBefore = count;
-    log.pitch = pitchEngine_.generate(pitcher, batter, count, std::nullopt, random);
-    log.swingDecision = swingDecisionEngine_.decide(batter, log.pitch, count, pitcher.throwingHand, random);
+    // lastPitch は tunneling チェックのみに使用; PitchEngine の球種選択は独立
+    log.pitch = pitchEngine_.generate(pitcher, batter, count, std::nullopt, history, random);
+
+    // 打者アプローチ補正 (swing decision 前)
+    Player decisionBatter = batter;
+
+    // 2ストライクアプローチ: コンタクト重視・パワーを犠牲にして三振回避
+    if (count.strikes >= 2) {
+        decisionBatter.contact = std::min(80, batter.contact + 2);
+        decisionBatter.power   = std::max(1,  batter.power   - 3);
+    }
+
+    // ピッチトンネリング: 前球と同方向の球種コンボで打者の判断が遅れる
+    if (lastPitch.has_value()) {
+        const PitchType prev = lastPitch->pitchType;
+        const PitchType curr = log.pitch.pitchType;
+        const bool tunnel =
+            (prev == PitchType::Fastball  && (curr == PitchType::Cutter   || curr == PitchType::Changeup || curr == PitchType::Splitter)) ||
+            (prev == PitchType::Cutter    && (curr == PitchType::Fastball  || curr == PitchType::Slider)) ||
+            (prev == PitchType::Slider    &&  curr == PitchType::Curveball) ||
+            (prev == PitchType::Curveball &&  curr == PitchType::Slider)    ||
+            (prev == PitchType::Changeup  &&  curr == PitchType::Fastball)  ||
+            (prev == PitchType::Splitter  &&  curr == PitchType::Fastball);
+        if (tunnel) {
+            decisionBatter.eye = std::max(1, decisionBatter.eye - 3);
+        }
+    }
+
+    log.swingDecision = swingDecisionEngine_.decide(decisionBatter, log.pitch, count, pitcher.throwingHand, random);
 
     if (log.swingDecision.decision == SwingDecisionType::Take) {
         log.zoneResult = zoneJudge_.judge(log.pitch);

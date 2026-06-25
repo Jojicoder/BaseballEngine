@@ -752,7 +752,18 @@ PlayResolution PlayResolutionEngine::resolve(const BattedBall& ball,
                               && ball.estimatedDistance < 200.0;
     const double sigOffset = isLineDrive ? 0.0 : (isShallowFly ? 0.8 : 0.4);
     const double reachProb = 1.0 / (1.0 + std::exp(-5.0 * (margin + sigOffset)));
-    if (random.real(0.0, 1.0) >= reachProb) return hitResolution(ball, attempt);
+    if (random.real(0.0, 1.0) >= reachProb) {
+        // Diving catch: elite outfielders can dive for near-misses
+        const double gap = attempt.travelTime - attempt.availableTime;
+        if (gap > 0.0 && gap <= 0.38) {
+            const double diveChance = attempt.fielding * (0.38 - gap) / 0.38 * 0.36;
+            if (random.real(0.0, 1.0) < diveChance) {
+                return withFielding(PlayOutcomeType::Out, FieldingOutcomeType::Caught,
+                                    1, 0, "diving catch", attempt, true);
+            }
+        }
+        return hitResolution(ball, attempt);
+    }
 
     // P(catch | reached): line drives and hard hits stress even good OF
     const double diff = flyDifficulty(ball);

@@ -47,6 +47,7 @@ bool isChase(LocationIntent i) {
 double scoreCandidate(
     const Player& batter, const Count& count,
     const std::optional<Pitch>& lastPitch,
+    const std::optional<BatterHistory>& history,
     PitchType type, LocationIntent intent, int grade,
     double awayDir, Random& random)
 {
@@ -138,6 +139,20 @@ double scoreCandidate(
         if (!lastWasAway && intent == LocationIntent::LowOutside) score += 0.18;
     }
 
+    // ── Cross-at-bat memory: batter's in-game tendencies ────────────────────
+    // If batter chased or whiffed this pitch type in a previous AB, lean on it.
+    // If batter consistently laid off a chase pitch type, reduce its use as waste pitch.
+    if (history.has_value()) {
+        const std::string typeName = toString(type);
+        const auto& h = *history;
+        const auto chIt = h.chases.find(typeName);
+        const auto whIt = h.whiffs.find(typeName);
+        if (chIt != h.chases.end() && chIt->second > 0)  score += 0.18;
+        if (whIt != h.whiffs.end() && whIt->second > 0)  score += 0.12;
+        if (chase && chIt != h.chases.end() && chIt->second == 0 && h.totalPitches >= 4)
+            score -= 0.10;
+    }
+
     score += random.real(-0.35, 0.35);
     return score;
 }
@@ -221,6 +236,7 @@ void applySpinParams(Pitch& pitch, double handSign, const Player& pitcher, Rando
 // ── PitchEngine::generate ─────────────────────────────────────────────────
 Pitch PitchEngine::generate(const Player& pitcher, const Player& batter,
                             const Count& count, const std::optional<Pitch>& lastPitch,
+                            const std::optional<BatterHistory>& history,
                             Random& random) const
 {
     const BattingSide side = batter.battingSide;
@@ -261,7 +277,7 @@ Pitch PitchEngine::generate(const Player& pitcher, const Player& batter,
             c.type   = pg.type;
             c.intent = intent;
             c.grade  = pg.grade;
-            c.score  = scoreCandidate(batter, count, lastPitch,
+            c.score  = scoreCandidate(batter, count, lastPitch, history,
                                        pg.type, intent, pg.grade,
                                        awayDir, random);
             if (c.score > best.score) best = c;

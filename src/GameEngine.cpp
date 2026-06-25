@@ -242,7 +242,12 @@ double runnerTravelSeconds(int fromBase, int toBase, int runnerSpeed, bool twoOu
     }
 
     const int turns = std::max(0, toBase - fromBase - 1);
-    travelTime += static_cast<double>(turns) * 0.16;
+    // Route-optimized turn penalty: fast runners take a wider, aggressive arc that
+    // maintains more momentum (banana turn); slow runners square off and re-accelerate.
+    // speed=90 → ~0.09s/turn; speed=50 → 0.16s/turn; speed=30 → ~0.22s/turn
+    const double spdNorm = std::clamp((runnerSpeed - 50) / 50.0, -0.80, 0.80);
+    const double turnPenalty = std::clamp(0.16 - spdNorm * 0.07, 0.08, 0.25);
+    travelTime += static_cast<double>(turns) * turnPenalty;
     travelTime += 0.22;
     if (twoOuts) {
         travelTime = std::max(0.1, travelTime - 0.22);
@@ -815,6 +820,11 @@ void Team::sendPinchHitter(std::size_t benchIndex, std::size_t lineupIndex) {
     usedBench_.at(benchIndex) = true;
 }
 
+void Team::sendPinchRunner(std::size_t benchIndex, std::size_t lineupIndex) {
+    lineup_.at(lineupIndex) = bench_.at(benchIndex);
+    usedBench_.at(benchIndex) = true;
+}
+
 static std::vector<PlayerBoxScore> initPlayerStats(const Team& team) {
     std::vector<PlayerBoxScore> stats;
     stats.reserve(team.lineup().size());
@@ -866,6 +876,11 @@ GameEngine::GameEngine(Team awayTeam, Team homeTeam, Random random,
         const double hBias = random_.real(-0.09, 0.09);
         const double vBias = random_.real(-0.06, 0.06);
         atBatEngine_.setZoneJudge(ZoneJudge{UmpireProfile{hBias, vBias}});
+    }
+    // Per-game random wind (65% chance of non-zero wind)
+    if (random_.real(0.0, 1.0) > 0.35) {
+        ballpark_.windSpeedMph     = random_.real(3.0, 14.0);
+        ballpark_.windDirectionDeg = random_.real(0.0, 360.0);
     }
     // 試合前コンディション生成 → 守備アライメント構築
     generateGameForms();
@@ -1178,7 +1193,8 @@ void GameEngine::changePitcher(const Player& newPitcher, std::size_t bullpenInde
         lastPitcherChange_ = PitcherChangeEvent{fromName, newPitcher.name, reason};
     }
 
-    currentPitcherArsenal_.clear();  // 投手交代でアーセナルリセット
+    currentPitcherArsenal_.clear();         // 投手交代でアーセナルリセット
+    currentPitcherABsVsBatter_.clear();     // 投手交代で打席数リセット (TTO)
     currentBullpenUsed()[bullpenIndex] = true;
     currentPitcherMut() = newPitcher;
     auto& pstats = state_.isTop ? homePitcherStats_ : awayPitcherStats_;
@@ -1403,6 +1419,77 @@ bool GameEngine::considerIntentionalWalk() {
     return true;
 }
 
+// ── 代走 ────────────────────────────────────────────────────────
+void GameEngine::considerPinchRunner() {
+    if (state_.inning < 7) return;
+    const int myScore  = state_.isTop ? state_.awayScore : state_.homeScore;
+    const int oppScore = state_.isTop ? state_.homeScore : state_.awayScore;
+    if (std::abs(myScore - oppScore) > 2) return;
+
+    Team& batting = battingTeam();
+    const auto& bench   = batting.bench();
+    const auto& usedB   = batting.usedBench();
+
+    for (int baseIdx = 0; baseIdx <= 1; ++baseIdx) {
+        if (!state_.bases[baseIdx]) continue;
+        const std::string& runnerName = *state_.bases[baseIdx];
+
+        // 走者の速度を打順から検索
+        int runnerSpeed = 65;
+        std::size_t runnerLineupIdx = batting.lineup().size();
+        for (std::size_t i = 0; i < batting.lineup().size(); ++i) {
+            if (batting.lineup()[i].name == runnerName) {
+                runnerSpeed = batting.lineup()[i].speed;
+                runnerLineupIdx = i;
+                break;
+            }
+        }
+        if (runnerSpeed >= 58 || runnerLineupIdx == batting.lineup().size()) continue;
+
+        // 高速ベンチ選手を探す
+        for (std::size_t i = 0; i < bench.size(); ++i) {
+            if (usedB[i] || bench[i].speed < 74) continue;
+            state_.bases[baseIdx] = bench[i].name;
+            batting.sendPinchRunner(i, runnerLineupIdx);
+            break;
+        }
+        break; // 1人交代したら終了
+    }
+}
+
+// ── 守備固め ─────────────────────────────────────────────────────
+void GameEngine::considerDefensiveReplacement() {
+    if (state_.inning < 8) return;
+    const int myScore  = state_.isTop ? state_.homeScore : state_.awayScore; // 守備側スコア
+    const int oppScore = state_.isTop ? state_.awayScore : state_.homeScore;
+    const int lead = myScore - oppScore;
+    if (lead < 1 || lead > 2) return; // 1〜2点リードのみ
+
+    Team& defending = pitchingTeam();
+    const auto& lineup  = defending.lineup();
+    const auto& bench   = defending.bench();
+    const auto& usedB   = defending.usedBench();
+
+    // 最も fielding が低い野手 (C/P 以外) を探す
+    std::size_t worstIdx = lineup.size();
+    double worstField = 0.82;
+    for (std::size_t i = 0; i < lineup.size(); ++i) {
+        const auto pos = lineup[i].position;
+        if (pos == Position::Catcher || pos == Position::Pitcher) continue;
+        const double f = lineup[i].fielding / 100.0;
+        if (f < worstField) { worstField = f; worstIdx = i; }
+    }
+    if (worstIdx == lineup.size()) return;
+
+    // フィールディングが高いベンチ選手を探す
+    for (std::size_t i = 0; i < bench.size(); ++i) {
+        if (usedB[i]) continue;
+        if (bench[i].fielding <= lineup[worstIdx].fielding + 8) continue;
+        defending.sendPinchHitter(i, worstIdx); // lineup swap (守備交代)
+        break;
+    }
+}
+
 // ── form 生成 ──────────────────────────────────────────────────
 void GameEngine::generateGameForms() {
     gameforms_.clear();
@@ -1447,6 +1534,24 @@ Player GameEngine::formedBatter(const Player& batter, const Player& pitcher) con
         p.eye     = std::max(1, static_cast<int>(p.eye     * f));
     }
 
+    // ポジション別打撃補正: 守備優先ポジションは打撃抑制、打撃優先は強化
+    {
+        int dc = 0, dp = 0;
+        switch (batter.position) {
+            case Position::Catcher:      dc = -4; dp = -2; break;
+            case Position::Shortstop:    dc = -3; dp = -3; break;
+            case Position::SecondBase:   dc = -2; dp = -2; break;
+            case Position::CenterField:  dc = -1; dp = -2; break;
+            case Position::ThirdBase:    dc = +1; dp = +1; break;
+            case Position::RightField:   dc = +1; dp = +2; break;
+            case Position::LeftField:    dc = +2; dp = +2; break;
+            case Position::FirstBase:    dc = +2; dp = +3; break;
+            default: break;
+        }
+        p.contact = std::clamp(p.contact + dc, 1, 80);
+        p.power   = std::clamp(p.power   + dp, 1, 80);
+    }
+
     const MatchupContext matchup = matchupContext(batter, pitcher);
     p.battingSide = matchup.batterSide;
     if (matchup.sameHanded) {
@@ -1462,6 +1567,40 @@ Player GameEngine::formedBatter(const Player& batter, const Player& pitcher) con
     if (risp) {
         p.eye     = std::min(80, p.eye     + 1);
         p.contact = std::min(80, p.contact + 1);
+    }
+
+    // Hot/Cold ストリーク: 直近試合の成績が今試合に影響
+    if (auto it = streakMap_.find(batter.name); it != streakMap_.end()) {
+        const int bonus = static_cast<int>(it->second);
+        p.contact = std::clamp(p.contact + bonus,     1, 80);
+        p.eye     = std::clamp(p.eye     + bonus / 2, 1, 80);
+    }
+
+    // 打順周回 (time-through-order): 同じ投手への打席数が増えるほど有利
+    {
+        const auto ttoIt = currentPitcherABsVsBatter_.find(batter.name);
+        const int abCount = (ttoIt != currentPitcherABsVsBatter_.end()) ? ttoIt->second : 0;
+        if (abCount >= 2) {
+            p.contact = std::min(80, p.contact + 3);
+            p.eye     = std::min(80, p.eye     + 3);
+        } else if (abCount >= 1) {
+            p.contact = std::min(80, p.contact + 1);
+            p.eye     = std::min(80, p.eye     + 1);
+        }
+    }
+
+    // クラッチ補正: 7回以降接戦 or 2死RISP 時にパフォーマンス変動
+    {
+        const int myScore  = state_.isTop ? state_.awayScore : state_.homeScore;
+        const int oppScore = state_.isTop ? state_.homeScore : state_.awayScore;
+        const bool highLeverage = (state_.inning >= 7 && std::abs(myScore - oppScore) <= 1)
+                               || (state_.outs == 2 && risp);
+        if (highLeverage) {
+            const double clutchFactor = (batter.clutchRating - 50) / 50.0;
+            p.contact = std::clamp(p.contact + static_cast<int>(clutchFactor * 5), 1, 80);
+            p.eye     = std::clamp(p.eye     + static_cast<int>(clutchFactor * 3), 1, 80);
+            p.power   = std::clamp(p.power   + static_cast<int>(clutchFactor * 3), 1, 80);
+        }
     }
 
     return p;
@@ -1514,11 +1653,33 @@ Player GameEngine::effectivePitcher() const {
             p.pitchingStuff    = std::max(30, p.pitchingStuff    - 2);
         }
     }
+
+    // 5b. リリーフ登板直後ペナルティ: 0球目 = 冷えた状態で登板
+    // クローザーは常に 9 回前にブルペンで準備するため対象外
+    if (p.pitcherRole != PitcherRole::Starter
+        && p.pitcherRole != PitcherRole::Closer
+        && currentPitcherPitchCount() == 0) {
+        p.pitchingVelocity = std::max(30, p.pitchingVelocity - 2);
+        p.pitchingControl  = std::max(25, p.pitchingControl  - 4);
+        p.pitchingStuff    = std::max(30, p.pitchingStuff    - 3);
+    }
+
+    // 5. 先発 velocity fade — 先発はスタミナ閾値とは独立に球数で球速が落ちる
+    // MLB 平均: 85球で約 1.5 mph 低下 (1 unit ≈ 0.16 mph)
+    if (p.pitcherRole == PitcherRole::Starter && count > 45) {
+        const double fadeUnits = std::clamp((count - 45.0) / 55.0 * 9.0, 0.0, 9.0);
+        p.pitchingVelocity = std::max(30, p.pitchingVelocity - static_cast<int>(fadeUnits));
+    }
+
     return p;
 }
 
 void GameEngine::setFatigueMap(std::map<std::string, int> m) {
     fatigueMap_ = std::move(m);
+}
+
+void GameEngine::setStreakMap(std::map<std::string, double> m) {
+    streakMap_ = std::move(m);
 }
 
 bool GameEngine::simulateNextPitch() {
@@ -1542,12 +1703,18 @@ bool GameEngine::simulateNextPitch() {
     if (!atBatInProgress_ && !pendingAtBatResult_) {
         considerPitcherChange();
         considerPinchHitter();
+        considerPinchRunner();
+        considerDefensiveReplacement();
         if (considerIntentionalWalk()) return false;
         const Player& batter   = battingTeam().currentBatter();
         const Player  effective = effectivePitcher(); // 疲労補正済み
         const Player  formed = formedBatter(batter, effective);
         battingTeam().advanceBatter();
         currentAtBat_ = atBatEngine_.startAtBat(formed, effective);
+        {
+            const auto histIt = batterHistory_.find(batter.name);
+            if (histIt != batterHistory_.end()) currentAtBat_.batterHistory = histIt->second;
+        }
         atBatInProgress_ = true;
     }
 
@@ -1605,6 +1772,16 @@ bool GameEngine::simulateNextPitch() {
                 const double situMult = (r1B && !r2B) ? 1.3 : 0.7;
                 buntProb = (weakHitter ? 0.11 : 0.04) * inningMult * situMult;
                 buntProb = std::min(buntProb, 0.30);
+            }
+        }
+        // スクイズプレー: 3塁走者 + 1死以下 + 接戦
+        if (r3B && state_.outs <= 1) {
+            const int battingScore2  = state_.isTop ? state_.awayScore : state_.homeScore;
+            const int pitchingScore2 = state_.isTop ? state_.homeScore : state_.awayScore;
+            if (std::abs(battingScore2 - pitchingScore2) <= 1) {
+                const Player& cur = battingTeam().currentBatter();
+                const bool weakHitter2 = cur.contact < 65;
+                buntProb = std::max(buntProb, weakHitter2 ? 0.22 : 0.08);
             }
         }
         currentAtBat_.buntIntent = (buntProb > 0.0 && random_.chance(buntProb));
@@ -1668,6 +1845,21 @@ bool GameEngine::simulateNextPitch() {
     }
 
     if (terminal) {
+        // Update cross-at-bat pitch memory for this batter
+        auto& hist = batterHistory_[currentAtBat_.batter.name];
+        for (const auto& log : currentAtBat_.pitchLogs) {
+            const std::string typeName = joji::toString(log.pitch.pitchType);
+            hist.totalPitches++;
+            const bool inZone = std::abs(log.pitch.locationX) <= 0.83
+                             && log.pitch.locationZ >= 1.55
+                             && log.pitch.locationZ <= 3.50;
+            if (log.swingDecision.decision == SwingDecisionType::Swing && !inZone)
+                hist.chases[typeName]++;
+            if (log.pitchOutcome == PitchOutcome::SwingingStrike)
+                hist.whiffs[typeName]++;
+        }
+        // TTO: 現在投手との対戦打席数をインクリメント
+        currentPitcherABsVsBatter_[currentAtBat_.batter.name]++;
         pendingAtBatResult_ = buildPlayResult(currentAtBat_);
         atBatInProgress_    = false;
         return true;
@@ -1735,6 +1927,8 @@ std::optional<PlayResult> GameEngine::simulateNextPlay(std::ostream* out) {
     }
 
     considerPitcherChange();
+    considerPinchRunner();
+    considerDefensiveReplacement();
     const Player& batter = battingTeam().currentBatter();
     battingTeam().advanceBatter();
 
@@ -1823,6 +2017,22 @@ bool GameEngine::isWalkOffState() const {
 void GameEngine::initHalfInning() {
     if (rules_.useExtraInningTiebreaker && state_.inning >= rules_.tiebreakerStartInning) {
         state_.bases[1] = "Automatic Runner";
+    }
+
+    // キャッチャーフレーミング補正: 守備側捕手の fielding に基づいてゾーン幅を微調整
+    {
+        const DefenseAlignment& def = pitchingDefenseAlignment();
+        double catcherFielding = 0.83; // default (league average)
+        for (const auto& f : def.fielders) {
+            if (f.position == FieldPosition::Catcher) {
+                catcherFielding = f.fielding;
+                break;
+            }
+        }
+        const double framingBias = std::clamp((catcherFielding - 0.83) * 0.25, -0.04, 0.06);
+        const double hBias = random_.real(-0.09, 0.09);
+        const double vBias = random_.real(-0.06, 0.06);
+        atBatEngine_.setZoneJudge(ZoneJudge{UmpireProfile{hBias, vBias, framingBias}});
     }
 }
 
@@ -1993,17 +2203,47 @@ PlayResult GameEngine::simulateAtBat(const Player& batter, const Player& /*pitch
     const bool r3B = state_.bases[2].has_value();
     const bool buntSituation = (r1B || r2B) && !r3B && state_.outs < 2;
     const bool weakHitter = batter.contact + batter.power < 105;
-    const double buntProb = buntSituation ? (weakHitter ? 0.12 : 0.05) : 0.0;
+    double buntProb = buntSituation ? (weakHitter ? 0.12 : 0.05) : 0.0;
+    // スクイズプレー: 3塁走者 + 1死以下 + 接戦
+    if (r3B && state_.outs <= 1) {
+        const int bs = state_.isTop ? state_.awayScore : state_.homeScore;
+        const int ps = state_.isTop ? state_.homeScore : state_.awayScore;
+        if (std::abs(bs - ps) <= 1)
+            buntProb = std::max(buntProb, weakHitter ? 0.22 : 0.08);
+    }
     const bool buntIntent = buntProb > 0.0 && random_.chance(buntProb);
     if (buntIntent) {
         battingBoxScore().buntAttempts += 1;
     }
 
+    std::optional<BatterHistory> history;
+    {
+        const auto histIt = batterHistory_.find(formed.name);
+        if (histIt != batterHistory_.end()) history = histIt->second;
+    }
     const AtBatResult ar = atBatEngine_.simulatePlateAppearance(formed,
                                                                 effective,
                                                                 random_,
-                                                                buntIntent);
+                                                                buntIntent,
+                                                                history);
     addPitchCount(static_cast<int>(ar.pitchLogs.size()));
+    // Update cross-at-bat pitch memory from this plate appearance
+    {
+        auto& hist = batterHistory_[formed.name];
+        for (const auto& log : ar.pitchLogs) {
+            const std::string typeName = joji::toString(log.pitch.pitchType);
+            hist.totalPitches++;
+            const bool inZone = std::abs(log.pitch.locationX) <= 0.83
+                             && log.pitch.locationZ >= 1.55
+                             && log.pitch.locationZ <= 3.50;
+            if (log.swingDecision.decision == SwingDecisionType::Swing && !inZone)
+                hist.chases[typeName]++;
+            if (log.pitchOutcome == PitchOutcome::SwingingStrike)
+                hist.whiffs[typeName]++;
+        }
+    }
+    // TTO: 現在投手との対戦打席数をインクリメント
+    currentPitcherABsVsBatter_[formed.name]++;
     lastAtBat_ = ar;
 
     AtBatState state;
@@ -2068,11 +2308,21 @@ PlayResult GameEngine::applyPlay(const PlayResult& rawResult) {
                 && state_.bases[1].has_value()
                 && triplePlayShape
                 && random_.chance(state_.bases[2].has_value() ? 0.035 : 0.055);
+            // DP 成立率: 走者速度と守備力を考慮 (速い走者 → 崩れやすい)
+            double dpChance = 0.32;
+            if (state_.bases[0].has_value()) {
+                for (const auto& p : battingTeam().lineup()) {
+                    if (p.name == *state_.bases[0]) {
+                        dpChance = std::clamp(0.32 - (p.speed - 60) * 0.004, 0.14, 0.46);
+                        break;
+                    }
+                }
+            }
             const bool dpEligible =
                 state_.bases[0].has_value()
                 && state_.outs < 2
                 && doublePlayShape
-                && random_.chance(0.32);
+                && random_.chance(dpChance);
 
             battingBoxScore().atBats += 1;
             if (batter) { batter->atBats++; }
@@ -2941,7 +3191,7 @@ void GameEngine::checkStolenBase() {
         for (const auto& p : battingTeam().lineup())
             if (p.name == r1) { spd1 = p.speed; break; }
         const double spdFactor1 = (spd1 - 55) * 0.004;
-        if (random_.chance(std::clamp(0.039 * situMult + spdFactor1 + tempoAdj, 0.002, 0.18))) {
+        if (random_.chance(std::clamp(0.060 * situMult + spdFactor1 + tempoAdj, 0.002, 0.18))) {
             const int afterPitch = static_cast<int>(currentAtBat_.pitchLogs.size());
             battingBoxScore().stolenBaseAttempts += 2;
             // Lead runner (2B→3B) resolves first; if caught, trail runner may abort
@@ -2949,7 +3199,7 @@ void GameEngine::checkStolenBase() {
             for (const auto& p : battingTeam().lineup())
                 if (p.name == r2) { spd2 = p.speed; break; }
             const double spdF2 = (spd2 - 55) * 0.004;
-            const bool leadSuccess = random_.chance(std::clamp(0.73 + spdF2 - armFactor, 0.38, 0.90));
+            const bool leadSuccess = random_.chance(std::clamp(0.77 + spdF2 - armFactor, 0.38, 0.92));
             const bool trailSuccess = random_.chance(std::clamp(0.81 + spdFactor1 - armFactor * 0.6, 0.42, 0.92));
 
             if (leadSuccess) {
@@ -2995,12 +3245,12 @@ void GameEngine::checkStolenBase() {
 
     // Single steal: 1B→2B (most common; 2B must be open)
     if (on1B && !on2B) {
-        attemptSteal(*state_.bases[0], 1, 2, 0.066 * situMult, 0.79);
+        attemptSteal(*state_.bases[0], 1, 2, 0.100 * situMult, 0.83);
     }
 
     // Single steal: 2B→3B (less common; 3B must be open, 1B must be empty to avoid force-out risk)
     if (on2B && !on3B && !on1B && state_.outs < 3) {
-        attemptSteal(*state_.bases[1], 2, 3, 0.033 * situMult, 0.73);
+        attemptSteal(*state_.bases[1], 2, 3, 0.050 * situMult, 0.77);
     }
 }
 

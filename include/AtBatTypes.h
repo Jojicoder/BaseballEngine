@@ -5,6 +5,7 @@
 
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace joji {
@@ -158,6 +159,13 @@ struct AtBatResult {
 };
 
 // 1球ずつ進むモード用: 打席の進行中状態
+// Cross-at-bat pitch sequence memory: pitcher observes batter's in-game tendencies.
+struct BatterHistory {
+    std::unordered_map<std::string, int> chases; // pitchType → out-of-zone swings
+    std::unordered_map<std::string, int> whiffs; // pitchType → swing-and-miss count
+    int totalPitches = 0;
+};
+
 struct AtBatState {
     Player batter;
     Player pitcher;
@@ -170,6 +178,7 @@ struct AtBatState {
     std::optional<BattedBallInput> battedBallInput;
     bool buntIntent = false; // バント意図: GameEngine が状況に応じて設定
     std::optional<Pitch> lastPitch; // 前球（配球スコアリング用）
+    std::optional<BatterHistory> batterHistory; // 前打席以前の傾向 (投手が活用)
 };
 
 std::string toString(PitchType type);
