@@ -1451,6 +1451,14 @@ Player GameEngine::formedBatter(const Player& batter, const Player& pitcher) con
         p.contact += 2;
         p.eye += 2;
     }
+
+    // RISP situational: runner on 2B or 3B → slightly more patient, protect the plate
+    const bool risp = state_.bases[1].has_value() || state_.bases[2].has_value();
+    if (risp) {
+        p.eye     = std::min(80, p.eye     + 1);
+        p.contact = std::min(80, p.contact + 1);
+    }
+
     return p;
 }
 
@@ -1866,7 +1874,7 @@ PlayResult GameEngine::buildPlayResult(const AtBatState& atBat) {
         return result;
     }
 
-    result.battedBall = ballPhysicsEngine_.simulate(*atBat.battedBallInput, ballpark_);
+    result.battedBall = ballPhysicsEngine_.simulate(*atBat.battedBallInput, ballpark_, fastMode_);
     result.battedBall.batterSpeedNorm = std::clamp((atBat.batter.speed - 50) / 50.0, -0.8, 0.8);
     const DefenseAlignment shiftedDefense = applyDefensiveShift(pitchingDefenseAlignment(), atBat.batter);
     const PlayResolution resolution = playResolutionEngine_.resolve(
@@ -2916,7 +2924,7 @@ void GameEngine::checkStolenBase() {
         for (const auto& p : battingTeam().lineup())
             if (p.name == r1) { spd1 = p.speed; break; }
         const double spdFactor1 = (spd1 - 55) * 0.004;
-        if (random_.chance(std::clamp(0.026 * situMult + spdFactor1 + tempoAdj, 0.002, 0.14))) {
+        if (random_.chance(std::clamp(0.039 * situMult + spdFactor1 + tempoAdj, 0.002, 0.18))) {
             const int afterPitch = static_cast<int>(currentAtBat_.pitchLogs.size());
             battingBoxScore().stolenBaseAttempts += 2;
             // Lead runner (2B→3B) resolves first; if caught, trail runner may abort
@@ -2924,8 +2932,8 @@ void GameEngine::checkStolenBase() {
             for (const auto& p : battingTeam().lineup())
                 if (p.name == r2) { spd2 = p.speed; break; }
             const double spdF2 = (spd2 - 55) * 0.004;
-            const bool leadSuccess = random_.chance(std::clamp(0.67 + spdF2 - armFactor, 0.38, 0.90));
-            const bool trailSuccess = random_.chance(std::clamp(0.75 + spdFactor1 - armFactor * 0.6, 0.42, 0.92));
+            const bool leadSuccess = random_.chance(std::clamp(0.73 + spdF2 - armFactor, 0.38, 0.90));
+            const bool trailSuccess = random_.chance(std::clamp(0.81 + spdFactor1 - armFactor * 0.6, 0.42, 0.92));
 
             if (leadSuccess) {
                 battingBoxScore().stolenBases++;
@@ -2970,12 +2978,12 @@ void GameEngine::checkStolenBase() {
 
     // Single steal: 1B→2B (most common; 2B must be open)
     if (on1B && !on2B) {
-        attemptSteal(*state_.bases[0], 1, 2, 0.044 * situMult, 0.73);
+        attemptSteal(*state_.bases[0], 1, 2, 0.066 * situMult, 0.79);
     }
 
     // Single steal: 2B→3B (less common; 3B must be open, 1B must be empty to avoid force-out risk)
     if (on2B && !on3B && !on1B && state_.outs < 3) {
-        attemptSteal(*state_.bases[1], 2, 3, 0.022 * situMult, 0.67);
+        attemptSteal(*state_.bases[1], 2, 3, 0.033 * situMult, 0.73);
     }
 }
 

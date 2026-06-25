@@ -2,13 +2,16 @@
 #include "Teams.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
 #include <map>
+#include <mutex>
 #include <numeric>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -301,6 +304,9 @@ void runSeason(std::vector<joji::Team>& teams,
     // 5人ローテーション追跡: チームごとに何試合目かをカウント
     std::vector<int> rotSlot(n, 0);
 
+    // Per-game weather: seeded per season for reproducibility
+    joji::Random weatherRng{std::optional<uint32_t>{seed * 2654435761u}};
+
     // 連投疲労追跡: pitcher name → 最後に登板したゲーム番号
     int gameCounter = 0;
     std::map<std::string, int> lastAppearanceGame;
@@ -328,11 +334,18 @@ void runSeason(std::vector<joji::Team>& teams,
                 auto fatigueI = buildFatigue(teams[i]);
                 auto fatigueJ = buildFatigue(teams[j]);
 
+                // Per-game weather: randomize temp ±10°F and wind around park baseline
+                joji::BallparkConfig bp = teams[j].homeBallpark();
+                bp.temperatureFahrenheit = std::clamp(
+                    bp.temperatureFahrenheit + weatherRng.real(-10.0, 10.0), 45.0, 95.0);
+                bp.windSpeedMph    = weatherRng.real(0.0, 8.0);
+                bp.windDirectionDeg = weatherRng.real(0.0, 360.0);
+
                 joji::GameEngine engine{
                     teams[i], teams[j],
                     joji::Random{std::optional<uint32_t>{seed++}},
                     joji::GameRules{},
-                    teams[j].homeBallpark()
+                    bp
                 };
                 engine.setFatigueMap(fatigueI);  // away team fatigue
                 std::ostringstream sink;
@@ -1056,35 +1069,148 @@ int main(int argc, char* argv[]) {
     TitleBoard titles;
     std::map<std::string, int> championCount;
 
-    uint32_t seed = 42;
     const int    minPAperSeason = 250;  // ~2.6 PA/game × 96 games
     const double minIPperSeason = 60.0; // ~starter gets ~115 IP/season
 
-    for (int s = 0; s < nSeasons; ++s) {
-        std::map<std::string, BatterAccum>  seasonBatters;
-        std::map<std::string, PitcherAccum> seasonPitchers;
+    // ── マルチスレッド並列シミュレーション ────────────────────────────────
+    // Each thread runs an independent batch of seasons with its own seed offset
+    // (42 + t * 100000), then merges results into the main accumulators.
+    const int nThreads = static_cast<int>(std::thread::hardware_concurrency());
+    const int batchSize = nSeasons / nThreads;
+    const int remainder = nSeasons % nThreads;
 
-        // Snapshot wins before season for playoff seeding
-        std::vector<int> winsSnapshot(n);
-        for (int i = 0; i < n; ++i) winsSnapshot[i] = acc[i].totalW;
+    // Thread-local result containers
+    struct ThreadResult {
+        std::vector<TeamAccum>                acc;
+        std::map<std::string, BatterAccum>    allBatters;
+        std::map<std::string, PitcherAccum>   allPitchers;
+        std::map<std::string, TeamBaserunAccum> baserunMap;
+        std::map<std::string, PosDefMap>      posDefMap;
+        TitleBoard                            titles;
+        std::map<std::string, int>            championCount;
+        int                                   seasonsRun = 0;
+    };
 
-        runSeason(teams, acc, allBatters, allPitchers,
-                  seasonBatters, seasonPitchers,
-                  baserunMap, posDefMap, seed);
-        awardTitles(seasonBatters, seasonPitchers, titles, minPAperSeason, minIPperSeason);
-
-        // Per-season wins for playoff seeding
-        if (n >= 4) {
-            std::vector<int> seasonWins(n);
-            for (int i = 0; i < n; ++i) seasonWins[i] = acc[i].totalW - winsSnapshot[i];
-            const std::string champ = runPlayoffs(teams, seasonWins, seed);
-            championCount[champ]++;
+    std::vector<ThreadResult> results(nThreads);
+    for (int t = 0; t < nThreads; ++t) {
+        results[t].acc.resize(n);
+        for (int i = 0; i < n; ++i) {
+            results[t].acc[i].name   = teams[i].name();
+            results[t].acc[i].league = teams[i].league();
         }
-
-        if ((s + 1) % 10 == 0)
-            std::cerr << "  " << (s + 1) << "/" << nSeasons << " done\r";
     }
+
+    std::mutex progressMutex;
+    std::atomic<int> doneCount{0};
+
+    auto worker = [&](int t) {
+        const int mySeasons = batchSize + (t < remainder ? 1 : 0);
+        uint32_t seed = static_cast<uint32_t>(42 + t * 100000);
+        auto localTeams = teams;
+        ThreadResult& r = results[t];
+
+        for (int s = 0; s < mySeasons; ++s) {
+            std::map<std::string, BatterAccum>  seasonBatters;
+            std::map<std::string, PitcherAccum> seasonPitchers;
+
+            std::vector<int> winsSnapshot(n);
+            for (int i = 0; i < n; ++i) winsSnapshot[i] = r.acc[i].totalW;
+
+            runSeason(localTeams, r.acc, r.allBatters, r.allPitchers,
+                      seasonBatters, seasonPitchers,
+                      r.baserunMap, r.posDefMap, seed);
+            awardTitles(seasonBatters, seasonPitchers, r.titles, minPAperSeason, minIPperSeason);
+
+            if (n >= 4) {
+                std::vector<int> seasonWins(n);
+                for (int i = 0; i < n; ++i) seasonWins[i] = r.acc[i].totalW - winsSnapshot[i];
+                const std::string champ = runPlayoffs(localTeams, seasonWins, seed);
+                r.championCount[champ]++;
+            }
+
+            const int done = ++doneCount;
+            if (done % 10 == 0) {
+                std::lock_guard<std::mutex> lk(progressMutex);
+                std::cerr << "  " << done << "/" << nSeasons << " done\r";
+            }
+        }
+        r.seasonsRun = mySeasons;
+    };
+
+    std::vector<std::thread> threads;
+    threads.reserve(nThreads);
+    for (int t = 0; t < nThreads; ++t)
+        threads.emplace_back(worker, t);
+    for (auto& th : threads)
+        th.join();
     std::cerr << "\n";
+
+    // ── マージ ───────────────────────────────────────────────────────────────
+    auto mergeBatters = [](std::map<std::string, BatterAccum>& dst,
+                           const std::map<std::string, BatterAccum>& src) {
+        for (const auto& [k, b] : src) {
+            auto& d = dst[k];
+            d.name  = b.name; d.team  = b.team;
+            d.atBats += b.atBats; d.hits += b.hits; d.doubles_ += b.doubles_;
+            d.triples += b.triples; d.homeRuns += b.homeRuns; d.walks += b.walks;
+            d.strikeouts += b.strikeouts; d.hitByPitch += b.hitByPitch;
+            d.rbi += b.rbi; d.totalBases += b.totalBases; d.sacFlies += b.sacFlies;
+            d.stolenBases += b.stolenBases; d.caughtStealing += b.caughtStealing;
+        }
+    };
+    auto mergePitchers = [](std::map<std::string, PitcherAccum>& dst,
+                            const std::map<std::string, PitcherAccum>& src) {
+        for (const auto& [k, p] : src) {
+            auto& d = dst[k];
+            d.name = p.name; d.team = p.team;
+            d.games += p.games; d.gamesStarted += p.gamesStarted; d.wins += p.wins;
+            d.outsRecorded += p.outsRecorded; d.runsAllowed += p.runsAllowed;
+            d.earnedRuns += p.earnedRuns; d.strikeouts += p.strikeouts; d.walks += p.walks;
+            d.homeRunsAllowed += p.homeRunsAllowed; d.hitsAllowed += p.hitsAllowed;
+            d.saves += p.saves; d.holds += p.holds; d.blownSaves += p.blownSaves;
+        }
+    };
+    auto mergeTitleMap = [](std::map<std::string, int>& dst,
+                            const std::map<std::string, int>& src) {
+        for (const auto& [k, v] : src) dst[k] += v;
+    };
+
+    for (int t = 0; t < nThreads; ++t) {
+        const ThreadResult& r = results[t];
+        for (int i = 0; i < n; ++i) {
+            acc[i].totalW    += r.acc[i].totalW;
+            acc[i].totalL    += r.acc[i].totalL;
+            acc[i].totalRS   += r.acc[i].totalRS;
+            acc[i].totalRA   += r.acc[i].totalRA;
+            acc[i].seasons   += r.acc[i].seasons;
+        }
+        mergeBatters(allBatters, r.allBatters);
+        mergePitchers(allPitchers, r.allPitchers);
+        for (const auto& [team, br] : r.baserunMap) {
+            auto& d = baserunMap[team];
+            d.name = br.name;
+            d.xbt += br.xbt; d.oob += br.oob; d.toh += br.toh;
+            d.sfa += br.sfa; d.sfs += br.sfs; d.games += br.games; d.ofa += br.ofa;
+            d.hits += br.hits; d.homeRuns += br.homeRuns; d.atBats += br.atBats;
+            d.strikeouts += br.strikeouts; d.sacFlies += br.sacFlies;
+            d.doubles_ += br.doubles_; d.walks += br.walks;
+        }
+        for (const auto& [team, pdm] : r.posDefMap) {
+            for (const auto& [pos, pd] : pdm) {
+                auto& d = posDefMap[team][pos];
+                d.putouts += pd.putouts; d.assists += pd.assists; d.errors += pd.errors;
+            }
+        }
+        mergeTitleMap(titles.battingChamp, r.titles.battingChamp);
+        mergeTitleMap(titles.homeRunKing,  r.titles.homeRunKing);
+        mergeTitleMap(titles.rbiKing,      r.titles.rbiKing);
+        mergeTitleMap(titles.sbTitle,      r.titles.sbTitle);
+        mergeTitleMap(titles.eraTitle,     r.titles.eraTitle);
+        mergeTitleMap(titles.winTitle,     r.titles.winTitle);
+        mergeTitleMap(titles.saveTitle,    r.titles.saveTitle);
+        mergeTitleMap(titles.kTitle,       r.titles.kTitle);
+        for (const auto& [champ, cnt] : r.championCount) championCount[champ] += cnt;
+    }
 
     const int    minPAcareer = minPAperSeason * nSeasons / 2;
     const double minIPcareer = minIPperSeason * nSeasons / 2;

@@ -59,6 +59,8 @@ public:
     void simulate(std::ostream& out);
     // 連投疲労マップ: pitcher name → 前回登板からの休養日数 (0=前日登板)
     void setFatigueMap(std::map<std::string, int> daysSinceLastPitch);
+    // Fast mode: double physics timestep + skip trajectory recording (season sim only)
+    void setFastMode(bool fast) { fastMode_ = fast; }
 
     std::optional<PlayResult> simulateNextPlay(std::ostream* out = nullptr);
     bool isComplete() const;
@@ -225,6 +227,7 @@ private:
     PitcherSitTracker awaySit_;
     PitcherSitTracker homeSit_;
     bool gameStatsFinalized_       = false;
+    bool fastMode_                 = false;
     PitcherSitTracker& currentSit();
 
     std::optional<PitcherChangeEvent> lastPitcherChange_;

@@ -1,5 +1,6 @@
 CXX := clang++
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -Wpedantic -I../include
+SEASON_CXXFLAGS := -std=c++17 -O3 -march=native -Wall -Wextra -Wpedantic -I../include -pthread
 SFML := /opt/homebrew/opt/sfml
 SFML_CXXFLAGS := $(CXXFLAGS) -I$(SFML)/include
 SFML_LDFLAGS := -L$(SFML)/lib -lsfml-graphics -lsfml-window -lsfml-system
@@ -105,7 +106,7 @@ season: $(SEASON_TARGET)
 
 $(SEASON_TARGET): $(SEASON_SOURCES)
 	mkdir -p $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(SEASON_SOURCES) -o $(SEASON_TARGET)
+	$(CXX) $(SEASON_CXXFLAGS) $(SEASON_SOURCES) -o $(SEASON_TARGET)
 
 season-run: season
 	./$(SEASON_TARGET) $(ARGS)

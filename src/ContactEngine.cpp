@@ -47,8 +47,8 @@ ContactResult ContactEngine::resolve(const Player& batter,
     result.isUnderBall = result.verticalBatError > 0.52;
 
     const double protectBonus = count.strikes >= 2 ? 0.13 : 0.0;
-    const double contactChance = clamp(0.84 + contact * 0.30 - stuff * 0.11 - pitch.pitchQuality * 0.11
-                                           + swing.contactIntent * 0.16 + result.timingQuality * 0.14
+    const double contactChance = clamp(0.845 + contact * 0.30 - stuff * 0.10 - pitch.pitchQuality * 0.10
+                                           + swing.contactIntent * 0.16 + result.timingQuality * 0.16
                                            - locationError + protectBonus,
                                        0.11,
                                        0.97);
@@ -219,6 +219,13 @@ ContactResult ContactEngine::resolve(const Player& batter,
     const double spinDir = std::tanh((input.launchAngle - 4.0) / 10.0);  // -1=topspin, +1=backspin
     input.backSpin = spinMag * spinDir;
     input.sideSpin = clamp(input.sprayAngle * 0.06 + random.real(-2.5, 2.5), -7.5, 7.5);
+
+    // SSW (Seam-Shift Wake): gyrospin component (spinAxisY) + reduced activeSpin → seam-orientation
+    // at contact is less predictable, causing random lateral batted-ball spin perturbation.
+    // Effect scales with gyro fraction (1 - activeSpin) and gyrospin axis magnitude.
+    const double gyroFraction = (1.0 - pitch.activeSpin) * std::abs(pitch.spinAxisY);
+    const double sswShift = gyroFraction * 4.5 * random.real(-1.0, 1.0);
+    input.sideSpin = clamp(input.sideSpin + sswShift, -7.5, 7.5);
 
     result.resultType = ContactResultType::InPlay;
     result.battedBallInput = input;

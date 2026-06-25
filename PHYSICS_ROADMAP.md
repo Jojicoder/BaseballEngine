@@ -1,6 +1,6 @@
 # JojiBaseballEngine — Physics Model Roadmap
 
-Last updated: 2026-06-21
+Last updated: 2026-06-24
 
 ---
 
@@ -10,7 +10,7 @@ Last updated: 2026-06-21
 |---|---|
 | Ball flight physics | 80% |
 | Batting / contact | 78% |
-| Fielding | 58% |
+| Fielding | 65% |
 | Base running | 70% |
 | Pitching | 70% |
 | Environment (wind, altitude, etc.) | 60% |
@@ -25,7 +25,7 @@ Last updated: 2026-06-21
 | Air drag | ✅ | `0.5 * ρ * Cd * A / m` | BallPhysicsEngine.cpp |
 | Magnus effect | ✅ | 3D spin axis cross product: `F = Cl * ρ * A/2m * speed² * (spinAxis × v̂)` | BallPhysicsEngine.cpp |
 | 3D spin axis | ✅ | `SpinState {axisX,Y,Z, rateRpm}`; batted ball axis derived from backSpin + sideSpin + spray angle | BallPhysicsEngine.cpp |
-| **Seam-shift wake (SSW)** | ⚠️ | Pitch SSW implemented (gyro fraction model); batted ball SSW pending | AnimationPlanBuilder.cpp |
+| **Seam-shift wake (SSW)** | ✅ | Pitch SSW + batted ball SSW (gyroFraction × sideSpin perturbation in ContactEngine) | ContactEngine.cpp |
 | Spin decay | ✅ | Batted ball: 6%/s exponential decay; pitch: 10%/s | BallPhysicsEngine.cpp, AnimationPlanBuilder.cpp |
 | Ground bounce | ✅ | Restitution coefficient + simulateBounceAndRoll | BallPhysicsEngine.cpp |
 | Rolling | ✅ | RollDeceleration + LandFriction | BallPhysicsEngine.cpp |
@@ -56,8 +56,8 @@ Last updated: 2026-06-21
 |---|---|---|---|
 | Pitch velocity | ✅ | Per pitch type + pitcher ability | PitchEngine.cpp:60 |
 | Spin rate | ✅ | Per pitch type range (1200–3050 rpm) | PitchEngine.cpp:81–106 |
-| **3D spin axis** | ❌ | No axis → break direction not physically derived | — |
-| **Seam-shift wake (SSW)** | ❌ | 2-seam / cutter / sinker seam effects absent | — |
+| **3D spin axis** | ✅ | spinAxisX/Y/Z + activeSpin per pitch type; armDrag from pitchingControl | PitchEngine.cpp |
+| **Seam-shift wake (SSW)** | ✅ | Per-pitch gyro fraction; batted ball sideSpin perturbation | PitchEngine.cpp, ContactEngine.cpp |
 | Fatigue degradation | ⚠️ | `form` reduces velocity and command | GameEngine.cpp |
 | Release point | ❌ | Fixed value | — |
 
@@ -123,7 +123,7 @@ Animation path is still linear (constant visual speed) — kinematic path animat
 `BallparkConfig::highAltitude()` preset added (5200 ft, 68°F → ρ ≈ 1.00 kg/m³ vs 1.225 at sea level).
 
 ### S — Ground Ball Rolling Model (BABIP structural fix)
-**Status:** ⛔ Investigated 2026-06-22 — blocked by RS/G calibration dependency
+**Status:** ✅ Implemented + recalibrated (2026-06-22/23)
 
 **Root cause identified:** The auto-hit behavior (BABIP ~0.473) is NOT primarily a "no-man's land" problem but a **candidate selection bug**: `groundCandidateIndices` uses `landingPoint` distance. Very-negative-LA balls (LA −4° to 0°) land at 10–30 ft → fall into `d < 34` branch → candidates = {Catcher, Pitcher} → both excluded by depth filter in `evaluateFielding` → `fielderId = -1` → auto-hit. This accounts for ~20–25% of all BIP.
 

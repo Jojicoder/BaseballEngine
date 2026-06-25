@@ -18,7 +18,8 @@ struct BattedBallInput {
 class BallPhysicsEngine {
 public:
     BattedBall simulate(const BattedBallInput& input,
-                        const BallparkConfig& ballpark = BallparkConfig{}) const;
+                        const BallparkConfig& ballpark = BallparkConfig{},
+                        bool fastMode = false) const;
     BattedBall generateFromContact(int batterPower, int pitcherStuff,
                                    AtBatResultType result, Random& random) const;
 

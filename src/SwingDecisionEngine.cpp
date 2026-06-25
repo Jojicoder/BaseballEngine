@@ -42,7 +42,7 @@ SwingDecision SwingDecisionEngine::decide(const Player& batter, const Pitch& pit
     if (chase) probability += handednessChase;
     // chaseRate: high = swings more at off-zone, low = lays off
     if (!zone) probability += chaseAdj * 0.12;
-    probability = clamp(probability, 0.03, 0.88);
+    probability = clamp(probability, zone ? 0.05 : 0.03, 0.88);
 
     SwingDecision decision;
     decision.swingProbability = probability;

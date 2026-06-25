@@ -271,8 +271,6 @@ FieldingAttempt evaluateFielding(const DefenseAlignment& defense,
 
         // Change-of-direction penalty: fielders pay extra time when the ball requires
         // them to reverse or sharply redirect their initial momentum burst.
-        // Outfielders: "over the head" requires a drop-step (0.1–0.35s extra).
-        // All fielders: balls hit >90° from optimal charge direction add ~0.15s.
         double codPenalty = 0.0;
         const bool isOutfielder = (f.position == FieldPosition::LeftField
                                 || f.position == FieldPosition::CenterField
@@ -282,16 +280,29 @@ FieldingAttempt evaluateFielding(const DefenseAlignment& defense,
             const double dy = target.y - f.startPosition.y;
             const double dLen = std::sqrt(dx*dx + dy*dy);
             if (dLen > 0.1) {
-                // Outfielders' initial read: charge toward home (-y); ball behind = +y delta.
-                // Infielders' initial read: charge toward home plate (-y direction).
-                const double primaryY = isOutfielder ? 1.0 : -1.0;  // initial step direction in y
-                const double dot = (dy / dLen) * primaryY;  // +1=aligned, -1=opposite
+                const double dxNorm = dx / dLen;
+                const double dyNorm = dy / dLen;
+                const double primaryY = isOutfielder ? 1.0 : -1.0;
+                const double dot = dyNorm * primaryY;
+
                 if (isOutfielder && dot > 0.25) {
-                    // Ball over head: drop-step penalty scales with how far "behind" it is
-                    codPenalty = std::clamp(0.10 + (dot - 0.25) * 0.50, 0.10, 0.38);
+                    // Over-the-head drop-step: diagonal routes are harder than pure back
+                    const double lateralBonus = std::abs(dxNorm) * 0.15;
+                    codPenalty = std::clamp(0.10 + (dot - 0.25) * 0.50 + lateralBonus, 0.10, 0.44);
                 } else if (dot < -0.2) {
-                    // Ball significantly in opposite direction of initial read
+                    // Ball in opposite direction of initial read
                     codPenalty = std::clamp(0.05 + (-dot - 0.2) * 0.25, 0.05, 0.20);
+                }
+
+                // Infielder lateral: ranging to arm/cross-body side is harder.
+                // SS/3B arm side = catcher's right (+x); 2B/1B arm side = catcher's left (-x).
+                if (!isOutfielder && dist > 6.0) {
+                    const bool leftSideIF = (f.position == FieldPosition::Shortstop
+                                          || f.position == FieldPosition::ThirdBase);
+                    const double armDot = dxNorm * (leftSideIF ? 1.0 : -1.0);
+                    if (armDot > 0.50) {
+                        codPenalty += std::clamp(0.04 + (armDot - 0.50) * 0.14, 0.04, 0.10);
+                    }
                 }
             }
         }
@@ -324,11 +335,11 @@ double groundBallOutProb(const BattedBall& ball, const FieldingAttempt& attempt,
                          double rollSpeed = 0.0, double batterSpeedNorm = 0.0) {
     const double absSpray = std::abs(ball.sprayAngle);
     double base;
-    if (absSpray < 8.0)        base = 0.82; // up the middle
-    else if (absSpray < 16.0)  base = 0.76; // SS/2B primary zone
-    else if (absSpray < 24.0)  base = 0.68; // SS/2B edge / 1B/3B primary zone
-    else if (absSpray < 33.0)  base = 0.58; // corner IF zone
-    else                        base = 0.44; // extreme pull: down the line
+    if (absSpray < 8.0)        base = 0.85; // up the middle
+    else if (absSpray < 16.0)  base = 0.79; // SS/2B primary zone
+    else if (absSpray < 24.0)  base = 0.71; // SS/2B edge / 1B/3B primary zone
+    else if (absSpray < 33.0)  base = 0.60; // corner IF zone
+    else                        base = 0.45; // extreme pull: down the line
     // Hard-hit penalty: EV 82→110 reduces out rate by up to 0.30
     const double evPenalty  = std::clamp((ball.exitVelocity - 82.0) / 28.0 * 0.30, 0.0, 0.30);
     // Slow roller bonus: roll speed < 30 ft/s → fielder has more time but tricky hops.

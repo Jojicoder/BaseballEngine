@@ -268,13 +268,14 @@ PhysicsState derivative(const PhysicsState& state, const BallConfig& config, con
     return {state.velocity, acceleration};
 }
 
-PhysicsState rk4Step(const PhysicsState& state, const BallConfig& config, const SpinState& spin) {
+PhysicsState rk4Step(const PhysicsState& state, const BallConfig& config, const SpinState& spin,
+                     double dt = TimeStep) {
     PhysicsState k1 = derivative(state, config, spin);
-    PhysicsState k2 = derivative(add(state, multiply(k1, TimeStep / 2.0)), config, spin);
-    PhysicsState k3 = derivative(add(state, multiply(k2, TimeStep / 2.0)), config, spin);
-    PhysicsState k4 = derivative(add(state, multiply(k3, TimeStep)), config, spin);
+    PhysicsState k2 = derivative(add(state, multiply(k1, dt / 2.0)), config, spin);
+    PhysicsState k3 = derivative(add(state, multiply(k2, dt / 2.0)), config, spin);
+    PhysicsState k4 = derivative(add(state, multiply(k3, dt)), config, spin);
 
-    return add(state, multiply(add(add(k1, multiply(k2, 2.0)), add(multiply(k3, 2.0), k4)), TimeStep / 6.0));
+    return add(state, multiply(add(add(k1, multiply(k2, 2.0)), add(multiply(k3, 2.0), k4)), dt / 6.0));
 }
 
 Vector3 interpolate(const Vector3& previous, const Vector3& current, double amount) {
@@ -297,7 +298,8 @@ void simulateBounceAndRoll(BattedBall& ball,
                            const Vector3& landingMeters,
                            const Vector3& landingVelocityMeters,
                            const BallConfig& config,
-                           const SpinState& spin) {
+                           const SpinState& spin,
+                           double dt = TimeStep) {
     Vector3 position = landingMeters;
     Vector3 velocity = landingVelocityMeters;
 
@@ -318,7 +320,7 @@ void simulateBounceAndRoll(BattedBall& ball,
         while (bounceState.position.z >= 0.0) {
             addFeetPoint(ball.bounceTrajectory, bounceState.position);
             previous = bounceState;
-            bounceState = rk4Step(bounceState, config, spin);
+            bounceState = rk4Step(bounceState, config, spin, dt);
         }
 
         const double denominator = previous.position.z - bounceState.position.z;
@@ -345,7 +347,7 @@ void simulateBounceAndRoll(BattedBall& ball,
 
         addFeetPoint(ball.bounceTrajectory, {position.x, position.y, 0.0});
 
-        const double deceleration = RollDeceleration * TimeStep;
+        const double deceleration = RollDeceleration * dt;
         if (deceleration >= speed) {
             vx = 0.0;
             vy = 0.0;
@@ -355,8 +357,8 @@ void simulateBounceAndRoll(BattedBall& ball,
         const double scale = (speed - deceleration) / speed;
         vx *= scale;
         vy *= scale;
-        position.x += vx * TimeStep;
-        position.y += vy * TimeStep;
+        position.x += vx * dt;
+        position.y += vy * dt;
     }
 
     ball.finalRestPoint = {
@@ -374,7 +376,8 @@ void simulateBounceAndRoll(BattedBall& ball,
 } // namespace
 
 BattedBall BallPhysicsEngine::simulate(const BattedBallInput& input,
-                                       const BallparkConfig& ballpark) const {
+                                       const BallparkConfig& ballpark,
+                                       bool fastMode) const {
     const double launchRadians = input.launchAngle * Pi / 180.0;
     const double sprayRadians = input.sprayAngle * Pi / 180.0;
     const double exitVelocityMetersPerSecond = input.exitVelocity * MetersPerMph;
@@ -406,16 +409,19 @@ BattedBall BallPhysicsEngine::simulate(const BattedBallInput& input,
 
     // Spin decays ~6% per second (Statcast: ~5-8% for batted balls)
     constexpr double BattedBallSpinDecay = 0.06;
+    // Fast mode: skip trajectory recording (season sim only).
+    // TimeStep is kept at 0.016 to preserve calibrated stats.
+    const double dt = TimeStep;
 
     while (state.position.z >= 0.0 && elapsed < 12.0) {
-        trajectory.push_back(state.position);
+        if (!fastMode) trajectory.push_back(state.position);
         previous = state;
         maxHeightMeters = std::max(maxHeightMeters, state.position.z);
 
         SpinState decayedSpin = spin;
         decayedSpin.rateRpm = spin.rateRpm * std::exp(-BattedBallSpinDecay * elapsed);
-        state = rk4Step(state, config, decayedSpin);
-        elapsed += TimeStep;
+        state = rk4Step(state, config, decayedSpin, dt);
+        elapsed += dt;
     }
 
     const double interpolation = previous.position.z / (previous.position.z - state.position.z);
@@ -457,7 +463,7 @@ BattedBall BallPhysicsEngine::simulate(const BattedBallInput& input,
     for (const auto& point : trajectory) {
         ball.trajectory.push_back({point.x * FeetPerMeter, point.y * FeetPerMeter, point.z * FeetPerMeter});
     }
-    simulateBounceAndRoll(ball, landingMeters, landingVelocityMeters, config, spin);
+    simulateBounceAndRoll(ball, landingMeters, landingVelocityMeters, config, spin, dt);
     fillFenceData(ball, ballpark);
     ball.classification = classify(ball, foul, ballpark);
     ball.isBunt = input.isBunt;
