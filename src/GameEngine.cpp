@@ -1489,7 +1489,19 @@ Player GameEngine::effectivePitcher() const {
         p.pitchingStuff    = std::max(30, p.pitchingStuff    - static_cast<int>(penalty * 0.25 * acc));
     }
 
-    // 3. 連投疲労補正 — 前日登板(0日休養)は能力ダウン、2日連続(1日休養)は軽微ダウン
+    // 3. 球種別疲労補正 — breaking ball (slider/curveball) 多投で制球力が低下する
+    // 5球ごとに -1 control。40球で上限 -8。これにより armDrag が増大し SSW 効果も強くなる。
+    {
+        int breakingCount = 0;
+        auto it = currentPitcherArsenal_.find("slider");
+        if (it != currentPitcherArsenal_.end()) breakingCount += it->second;
+        it = currentPitcherArsenal_.find("curveball");
+        if (it != currentPitcherArsenal_.end()) breakingCount += it->second;
+        const int breakingPenalty = std::min(8, breakingCount / 5);
+        p.pitchingControl = std::max(25, p.pitchingControl - breakingPenalty);
+    }
+
+    // 4. 連投疲労補正 — 前日登板(0日休養)は能力ダウン、2日連続(1日休養)は軽微ダウン
     if (auto it = fatigueMap_.find(p.name); it != fatigueMap_.end()) {
         const int daysRest = it->second;
         if (daysRest == 0) {

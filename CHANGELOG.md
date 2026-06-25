@@ -1,5 +1,38 @@
 # Changelog
 
+## v2.4 - BB% Fix, Breaking Ball Fatigue, Batter-Specific Approach (2026-06-24)
+
+**Confirmed metrics (100-season average):**
+
+| Metric | v2.3 → v2.4 | MLB ref |
+|--------|-------------|---------|
+| K% | 22.1% → **21.6%** | ~22% ✓ |
+| BB% | 7.3% → **8.2%** | ~8.5% ✓ |
+| BABIP | 0.297 → **0.296** | ~0.300 ✓ |
+| RS/G top | 4.60–4.75 → **4.74–4.88** | 4.5–5.5 ✓ |
+| RS/G bottom | 3.36–3.51 → **3.37–3.55** | ~3.5 ✓ |
+| ERA range | 3.44–4.24 → **3.48–4.31** | 3.5–4.5 ✓ |
+
+### BB% Fix — PitchEngine commandSpread
+
+- `behindInCount` reduced `0.16 → 0.10` — pitchers in 3-ball counts don't become more accurate under pressure; previously the large spread reduction caused too many grooved strikes in ball-heavy counts
+- Effect: BB% 7.3% → 8.2% (target ~8.5%)
+
+### Breaking Ball Fatigue — GameEngine effectivePitcher
+
+- Slider and curveball pitch count tracked via `currentPitcherArsenal_` per pitcher per game
+- Every 5 breaking balls thrown: `−1 pitchingControl` (max penalty: −8 at 40 breaking balls)
+- Effect: late-inning breaking ball artists lose command, `armDrag` increases naturally via `applySpinParams`, SSW effect strengthens for high-gyro pitchers
+- No new state required — reads existing arsenal counts
+
+### Batter-Specific Approach in Pitcher's Count — PitchEngine
+
+- `cvbAdj` (contact vs. breaking) weight raised `0.35 → 0.50` in 0-2/1-2 counts
+- Pitchers exploit breaking ball weakness more aggressively when ahead in count; avoid breaking balls more if batter handles them well
+- Contributes to lower K% from improved contact (elite cvb batters see fewer breaking balls in key situations)
+
+---
+
 ## v2.3 - Batter Psychology, Pitch AI, Predictive Fielding Routes (2026-06-24)
 
 **Confirmed metrics (100-season average):**

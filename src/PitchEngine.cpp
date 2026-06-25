@@ -99,8 +99,10 @@ double scoreCandidate(
     // High chase rate → off-zone pitches more effective (they'll bite)
     if (chase) score += chaseAdj * 0.45 - eyeAdj * 0.12;
 
-    // Breaking balls are less effective vs batters who handle them well
-    if (breaking) score -= cvbAdj * 0.35;
+    // Breaking balls: in pitcher's count (0-2/1-2) lean harder on matchup advantage —
+    // if batter hits breaking balls well, pivot to fastball; if they struggle, go to it.
+    const double cvbWeight = (count.strikes >= 2 && count.balls <= 1) ? 0.50 : 0.35;
+    if (breaking) score -= cvbAdj * cvbWeight;
 
     // High-ball hitter: attack low; chase down works as chase
     if (intent == LocationIntent::HighInside && hbhAdj > 0) score -= hbhAdj * 0.30;
@@ -272,7 +274,9 @@ Pitch PitchEngine::generate(const Player& pitcher, const Player& batter,
     pitch.pitchVelocity = clamp(velocityFor(best.type, pitcher, random), 68.0, 102.0);
 
     const double control = clamp((pitcher.pitchingControl - 50) / 50.0, -0.8, 0.8);
-    const double behindInCount = count.balls >= 3 ? 0.16 : 0.0;
+    // In ball-heavy counts pitchers don't become MORE accurate — they're under
+    // pressure. Reduced from 0.16 to 0.10 to allow more walks in 3-ball counts.
+    const double behindInCount = count.balls >= 3 ? 0.10 : 0.0;
     const double aheadInCount  = count.strikes >= 2 ? 0.10 : 0.0;
     // commandSpread: distance from target that command noise can reach.
     const double commandSpread = clamp(0.60 - control * 0.22 - behindInCount + aheadInCount, 0.26, 0.90);
