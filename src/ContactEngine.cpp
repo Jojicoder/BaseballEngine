@@ -117,7 +117,7 @@ ContactResult ContactEngine::resolve(const Player& batter,
     const double K   = (1.0 + cor) * q / (1.0 + q);
     const double eVphys = K * swing.batSpeed
                         + std::max(0.0, K - 1.0) * pitch.pitchVelocity
-                        + power * 5.0
+                        + power * 4.6
                         - (result.isJammed ? 6.0 : 0.0);
     input.exitVelocity = clamp(eVphys + random.real(-4.5, 4.5), 35.0, 122.0);
     const double vbeEffect = result.isUnderBall ? result.verticalBatError * -6.0
@@ -132,12 +132,14 @@ ContactResult ContactEngine::resolve(const Player& batter,
 
     // Barrel check BEFORE BIP shaping — prevents barrel hits from being
     // mis-converted to ground balls and losing their HR trajectory.
-    const double barrelChance = clamp((contactQuality - 0.60) * 1.50 + power * 0.22, 0.0, 0.42);
+    // Barrel rate is the main HR/SLG tail lever. Compress the power slope so
+    // elite hitters remain dangerous without dominating long-run leaderboards.
+    const double barrelChance = clamp((contactQuality - 0.60) * 1.45 + power * 0.20, 0.0, 0.40);
     const bool isBarrel = result.barrelAccuracy > 0.44 && contactQuality > 0.61
                           && input.exitVelocity >= 76.0 && random.chance(barrelChance);
     if (isBarrel) {
         input.exitVelocity = clamp(input.exitVelocity + random.real(6.0, 14.0), 45.0, 120.0);
-        input.launchAngle  = clamp(24.0 + power * 5.0 + random.real(0.0, 8.0), 22.0, 37.0);
+        input.launchAngle  = clamp(23.8 + power * 4.5 + random.real(0.0, 7.8), 22.0, 36.5);
     }
 
     // ── Bimodal BIP shaping ──────────────────────────────────────────────────

@@ -4,6 +4,16 @@
 
 namespace joji {
 
+bool chanceFromRoll(double probability, double roll) {
+    if (probability <= 0.0) {
+        return false;
+    }
+    if (probability >= 1.0) {
+        return true;
+    }
+    return roll < probability;
+}
+
 Random::Random(std::optional<std::uint32_t> seed) {
     if (seed.has_value()) {
         engine_.seed(*seed);
@@ -31,13 +41,7 @@ int Random::integer(int minInclusive, int maxInclusive) {
 }
 
 bool Random::chance(double probability) {
-    if (probability <= 0.0) {
-        return false;
-    }
-    if (probability >= 1.0) {
-        return true;
-    }
-    return real(0.0, 1.0) < probability;
+    return chanceFromRoll(probability, real(0.0, 1.0));
 }
 
 } // namespace joji

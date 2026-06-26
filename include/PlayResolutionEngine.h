@@ -91,9 +91,9 @@ struct BallparkConfig {
         return {"Queens Coliseum", 8.0, 412.0, 375.0, 332.0, 0.0, 69.0};
     }
     // Brooklyn Hammers — Iron Yard
-    // Hitter's park. Short corners and warm urban air boost HR.
+    // Mild hitter's park. Compact shape remains, but not enough to dominate league HR rate.
     static BallparkConfig ironYard() {
-        return {"Iron Yard", 7.0, 396.0, 354.0, 308.0, 0.0, 76.0};
+        return {"Iron Yard", 7.0, 398.0, 358.0, 312.0, 0.0, 73.0};
     }
     // Bronx Wolves — Wolf Den
     // Classic dimensions, neutral-to-hitter-friendly corners.
@@ -113,9 +113,9 @@ struct BallparkConfig {
 
     // ── League B — Philadelphia district ballparks ────────────────────────────
     // Fishtown Ferals — Ferals Field
-    // Short corners, warm urban air. Hitter's park in a tight neighborhood.
+    // Still hitter-friendly, but moderated so roster quality and park factor separate.
     static BallparkConfig feralsField() {
-        return {"Ferals Field", 7.0, 395.0, 352.0, 308.0, 0.0, 75.0};
+        return {"Ferals Field", 7.0, 397.0, 356.0, 312.0, 0.0, 73.0};
     }
     // Kensington Iron — Iron Works
     // Industrial neighborhood. Slightly hitter-friendly corners.

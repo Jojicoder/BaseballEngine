@@ -290,9 +290,9 @@ Pitch PitchEngine::generate(const Player& pitcher, const Player& batter,
     pitch.pitchVelocity = clamp(velocityFor(best.type, pitcher, random), 68.0, 102.0);
 
     const double control = clamp((pitcher.pitchingControl - 50) / 50.0, -0.8, 0.8);
-    // In ball-heavy counts pitchers don't become MORE accurate — they're under
-    // pressure. Reduced from 0.16 to 0.10 to allow more walks in 3-ball counts.
-    const double behindInCount = count.balls >= 3 ? 0.10 : 0.0;
+    // In ball-heavy counts pitchers try for the zone but still miss under pressure.
+    // This keeps 3-ball command explainable while allowing a league-average walk rate.
+    const double behindInCount = count.balls >= 3 ? 0.07 : 0.0;
     const double aheadInCount  = count.strikes >= 2 ? 0.10 : 0.0;
     // commandSpread: distance from target that command noise can reach.
     const double commandSpread = clamp(0.60 - control * 0.22 - behindInCount + aheadInCount, 0.26, 0.90);

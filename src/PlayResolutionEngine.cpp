@@ -97,7 +97,7 @@ std::vector<std::size_t> foulFlyCandidateIndices(const BattedBall& ball) {
     const Vector3& p = ball.landingPoint;
     const bool leftSide = p.x < 0.0;
 
-        if (p.y < 45.0) {
+    if (p.y < 45.0) {
         return leftSide
             ? std::vector<std::size_t>{indexForPosition(FieldPosition::Catcher),
                                        indexForPosition(FieldPosition::ThirdBase),
@@ -332,17 +332,18 @@ double grounderDifficulty(const BattedBall& ball) {
     return std::clamp(d, 0.0, 1.0);
 }
 
-// Zone-based ground ball out probability — calibrated to MLB average GB out rate ~74%.
+// Zone-based ground ball out probability — calibrated to BABIP around .300-.305
+// while preserving spray/EV/fielding explanations for each ground ball.
 // rollSpeed: ball speed at start of rolling phase (ft/s); batterSpeed: normalized batter speed.
 double groundBallOutProb(const BattedBall& ball, const FieldingAttempt& attempt,
                          double rollSpeed = 0.0, double batterSpeedNorm = 0.0) {
     const double absSpray = std::abs(ball.sprayAngle);
     double base;
-    if (absSpray < 8.0)        base = 0.85; // up the middle
-    else if (absSpray < 16.0)  base = 0.79; // SS/2B primary zone
-    else if (absSpray < 24.0)  base = 0.71; // SS/2B edge / 1B/3B primary zone
-    else if (absSpray < 33.0)  base = 0.60; // corner IF zone
-    else                        base = 0.45; // extreme pull: down the line
+    if (absSpray < 8.0)        base = 0.820; // up the middle
+    else if (absSpray < 16.0)  base = 0.760; // SS/2B primary zone
+    else if (absSpray < 24.0)  base = 0.680; // SS/2B edge / 1B/3B primary zone
+    else if (absSpray < 33.0)  base = 0.570; // corner IF zone
+    else                        base = 0.425; // extreme pull: down the line
     // Hard-hit penalty: EV 82→110 reduces out rate by up to 0.30
     const double evPenalty  = std::clamp((ball.exitVelocity - 82.0) / 28.0 * 0.30, 0.0, 0.30);
     // Slow roller bonus: roll speed < 30 ft/s → fielder has more time but tricky hops.
@@ -388,10 +389,6 @@ double catchProbForPosition(double fielding, double difficulty, FieldPosition po
         case FieldPosition::RightField:    k = 1.0; break;
         default:                           k = 1.4; break; // P, C
     }
-    return std::clamp(1.0 - (1.0 - fielding) * difficulty * k, 0.15, 0.995);
-}
-
-double catchProb(double fielding, double difficulty, double k = 1.1) {
     return std::clamp(1.0 - (1.0 - fielding) * difficulty * k, 0.15, 0.995);
 }
 
@@ -583,7 +580,10 @@ PlayResolution PlayResolutionEngine::resolve(const BattedBall& ball,
             FieldingAttempt attempt = evaluateFielding(active, candidates,
                                                        ball.landingPoint,
                                                        ball.hangTime);
-            if (arrivesInTime(attempt, 0.35)) {
+            // 高いポップフライ (hangTime >= 2.5s) はフィールダーが十分に準備できるため
+            // スラックを大きめに取る (リアクションタイム実質0相当)
+            const double slack = ball.hangTime >= 2.5 ? 1.0 : 0.35;
+            if (arrivesInTime(attempt, slack)) {
                 return withFielding(PlayOutcomeType::Out, FieldingOutcomeType::Caught,
                                     1, 0, "foul fly out", attempt, true);
             }

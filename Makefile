@@ -9,10 +9,12 @@ SOURCES := app/main.cpp \
 	src/BallPhysicsEngine.cpp \
 	src/ContactEngine.cpp \
 	src/GameEngine.cpp \
+	src/GameEngineBaseRunning.cpp \
 	src/JsonExporter.cpp \
 	src/PitchEngine.cpp \
 	src/PlayResolutionEngine.cpp \
 	src/Random.cpp \
+	src/RunExpectancy.cpp \
 	src/SwingDecisionEngine.cpp \
 	src/SwingEngine.cpp \
 	src/Teams.cpp \

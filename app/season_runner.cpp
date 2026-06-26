@@ -162,10 +162,14 @@ struct PosDefAccum {
     int putouts = 0;
     int assists  = 0;
     int errors   = 0;
+    int games    = 0;
 
     double fpct() const {
         const int total = putouts + assists + errors;
         return total > 0 ? static_cast<double>(putouts + assists) / total : 1.0;
+    }
+    double rangeFactorPerGame() const {
+        return games > 0 ? static_cast<double>(putouts + assists) / games : 0.0;
     }
 };
 
@@ -472,6 +476,7 @@ void runSeason(std::vector<joji::Team>& teams,
                         pd.putouts += p.putouts;
                         pd.assists  += p.assists;
                         pd.errors   += p.errors;
+                        pd.games    += 1;
                     }
                 };
                 accumPosDef(engine.awayPlayerStats(), teams[i].name());
@@ -1069,7 +1074,7 @@ void printPositionDefense(const std::map<std::string, PosDefMap>& posDefMap,
         for (const auto& t : sorted) teamOrder.push_back(t.name);
     }
 
-    std::cout << "\n=== Position Defense (PO-A-E, FPCT) ===\n";
+    std::cout << "\n=== Position Defense (PO-A-E, FPCT, Range) ===\n";
 
     for (const auto& teamName : teamOrder) {
         auto it = posDefMap.find(teamName);
@@ -1082,33 +1087,42 @@ void printPositionDefense(const std::map<std::string, PosDefMap>& posDefMap,
                   << std::setw(8)  << "A"
                   << std::setw(8)  << "E"
                   << std::setw(8)  << "FPCT"
-                  << "\n" << std::string(37, '-') << "\n";
+                  << std::setw(8)  << "RF/G"
+                  << "\n" << std::string(45, '-') << "\n";
 
-        int totPO = 0, totA = 0, totE = 0;
+        int totPO = 0, totA = 0, totE = 0, totGames = 0;
         for (joji::Position pos : kPosOrder) {
             auto pit = pdm.find(pos);
             if (pit == pdm.end()) continue;
             const PosDefAccum& pd = pit->second;
             std::ostringstream fp;
             fp << std::fixed << std::setprecision(3) << pd.fpct();
+            std::ostringstream rf;
+            rf << std::fixed << std::setprecision(2) << pd.rangeFactorPerGame();
             std::cout << std::left  << std::setw(5)  << posAbbr(pos)
                       << std::right << std::setw(8)  << pd.putouts
                       << std::setw(8)  << pd.assists
                       << std::setw(8)  << pd.errors
                       << std::setw(8)  << fp.str()
+                      << std::setw(8)  << rf.str()
                       << "\n";
             totPO += pd.putouts; totA += pd.assists; totE += pd.errors;
+            totGames += pd.games;
         }
         const double totFpct = (totPO + totA + totE) > 0
             ? static_cast<double>(totPO + totA) / (totPO + totA + totE) : 1.0;
         std::ostringstream tfp;
         tfp << std::fixed << std::setprecision(3) << totFpct;
-        std::cout << std::string(37, '-') << "\n"
+        const double totRf = totGames > 0 ? static_cast<double>(totPO + totA) / totGames : 0.0;
+        std::ostringstream trng;
+        trng << std::fixed << std::setprecision(2) << totRf;
+        std::cout << std::string(45, '-') << "\n"
                   << std::left  << std::setw(5)  << "TOT"
                   << std::right << std::setw(8)  << totPO
                   << std::setw(8)  << totA
                   << std::setw(8)  << totE
                   << std::setw(8)  << tfp.str()
+                  << std::setw(8)  << trng.str()
                   << "\n";
     }
 }
@@ -1282,6 +1296,7 @@ int main(int argc, char* argv[]) {
             for (const auto& [pos, pd] : pdm) {
                 auto& d = posDefMap[team][pos];
                 d.putouts += pd.putouts; d.assists += pd.assists; d.errors += pd.errors;
+                d.games += pd.games;
             }
         }
         mergeTitleMap(titles.battingChamp, r.titles.battingChamp);

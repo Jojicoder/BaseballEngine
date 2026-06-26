@@ -1,6 +1,9 @@
 #pragma once
 
+#include "GameState.h"
+
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -29,6 +32,13 @@ struct TeamSeasonSummary {
 // Serialize a completed game to a JSON string.
 // Includes: teams, score, result, line score, per-player batting + pitcher stats.
 std::string exportGameToJson(const GameEngine& engine);
+
+// Shared low-level JSON helpers for runners that stream custom event payloads.
+std::string jsonString(const std::string& value);
+std::string exportGameScoreToJson(const GameState& state);
+std::string exportBasesToJson(const GameState& state);
+std::string exportNullableIntArrayToJson(const std::vector<int>& values);
+std::string exportStringArrayToJson(const std::vector<std::string>& values);
 
 // Serialize one play animation/replay plan.
 std::string exportAnimationPlanToJson(const AnimationPlan& plan);

@@ -138,6 +138,8 @@ void addPlayerBoxScore(joji::PlayerBoxScore& dest, const joji::PlayerBoxScore& s
     dest.putouts   += src.putouts;
     dest.assists   += src.assists;
     dest.errors    += src.errors;
+    dest.rangeChances += src.rangeChances;
+    dest.rangePlays   += src.rangePlays;
 }
 
 double rate(int num, int den) {

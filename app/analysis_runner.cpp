@@ -1,5 +1,6 @@
 #include "GameEngine.h"
 #include "JsonExporter.h"
+#include "RunExpectancy.h"
 #include "Teams.h"
 
 #include <algorithm>
@@ -69,6 +70,10 @@ struct TeamAnalysis {
     }
     double slg() const { return atBats > 0 ? static_cast<double>(totalBases) / atBats : 0.0; }
     double ops() const { return obp() + slg(); }
+    double babip() const {
+        const int denom = atBats - strikeouts - homeRuns + sacFlies;
+        return denom > 0 ? static_cast<double>(hits - homeRuns) / denom : 0.0;
+    }
     double kPct() const {
         const int pa = plateAppearances();
         return pa > 0 ? strikeouts * 100.0 / pa : 0.0;
@@ -288,20 +293,48 @@ void printLeagueAverages(const TeamAnalysis& league) {
               << std::setw(8) << "OBP"
               << std::setw(8) << "SLG"
               << std::setw(8) << "OPS"
+              << std::setw(8) << "BABIP"
               << std::setw(8) << "K%"
               << std::setw(8) << "BB%"
               << std::setw(8) << "HR%"
               << std::setw(8) << "R/G"
-              << "\n" << std::string(64, '-') << "\n";
+              << "\n" << std::string(72, '-') << "\n";
     std::cout << std::left << std::setw(8) << fixed(league.avg(), 3)
               << std::setw(8) << fixed(league.obp(), 3)
               << std::setw(8) << fixed(league.slg(), 3)
               << std::setw(8) << fixed(league.ops(), 3)
+              << std::setw(8) << fixed(league.babip(), 3)
               << std::setw(8) << (fixed(league.kPct(), 1) + "%")
               << std::setw(8) << (fixed(league.bbPct(), 1) + "%")
               << std::setw(8) << (fixed(league.hrPct(), 1) + "%")
               << std::setw(8) << fixed(league.runsPerGame(), 2)
               << "\n";
+}
+
+void printRunExpectancyReference() {
+    std::cout << "\n=== Run Expectancy Reference ===\n";
+    std::cout << std::left << std::setw(8) << "Outs"
+              << std::setw(8) << "---"
+              << std::setw(8) << "1--"
+              << std::setw(8) << "-2-"
+              << std::setw(8) << "--3"
+              << std::setw(8) << "12-"
+              << std::setw(8) << "1-3"
+              << std::setw(8) << "-23"
+              << std::setw(8) << "123"
+              << "\n" << std::string(72, '-') << "\n";
+    for (int outs = 0; outs < 3; ++outs) {
+        std::cout << std::left << std::setw(8) << outs
+                  << std::setw(8) << fixed(joji::runExpectancy(outs, false, false, false), 2)
+                  << std::setw(8) << fixed(joji::runExpectancy(outs, true,  false, false), 2)
+                  << std::setw(8) << fixed(joji::runExpectancy(outs, false, true,  false), 2)
+                  << std::setw(8) << fixed(joji::runExpectancy(outs, false, false, true),  2)
+                  << std::setw(8) << fixed(joji::runExpectancy(outs, true,  true,  false), 2)
+                  << std::setw(8) << fixed(joji::runExpectancy(outs, true,  false, true),  2)
+                  << std::setw(8) << fixed(joji::runExpectancy(outs, false, true,  true),  2)
+                  << std::setw(8) << fixed(joji::runExpectancy(outs, true,  true,  true),  2)
+                  << "\n";
+    }
 }
 
 void printTeamIdentity(std::vector<TeamAnalysis> teams) {
@@ -541,6 +574,7 @@ int main(int argc, char* argv[]) {
 
     const TeamAnalysis league = leagueTotals(analysis);
     printLeagueAverages(league);
+    printRunExpectancyReference();
     printTeamIdentity(analysis);
     printCalibration(league);
 

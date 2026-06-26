@@ -18,9 +18,9 @@ bool inStrikeZone(const Pitch& pitch) {
 
 Swing SwingEngine::generate(const Player& batter,
                             const Pitch& pitch,
-	                            const Count& count,
-	                            const SwingDecision& decision,
-	                            Random& random) const {
+                            const Count& count,
+                            const SwingDecision& decision,
+                            Random& random) const {
     const double contact = clamp((batter.contact - 50) / 50.0, -0.8, 0.8);
     const double power = clamp((batter.power - 50) / 50.0, -0.8, 0.8);
     const double locationDifficulty = std::abs(pitch.locationX) * 0.12 + std::abs(pitch.locationZ - 2.5) * 0.08;
@@ -31,14 +31,16 @@ Swing SwingEngine::generate(const Player& batter,
     const double chasePenalty = chaseSwing ? 0.10 : 0.0;
 
     Swing swing;
-    swing.powerIntent = clamp(0.50 + power * 0.22 + (count.balls >= 2 ? 0.08 : 0.0)
+    // Power still creates harder, steeper swings, but the slope is compressed so
+    // elite bats separate naturally without producing too many .700+ SLG seasons.
+    swing.powerIntent = clamp(0.50 + power * 0.20 + (count.balls >= 2 ? 0.08 : 0.0)
                                   + decisionConfidence * 0.25 - chasePenalty * 0.35
                                   + random.real(-0.12, 0.12), 0.05, 0.98);
     swing.contactIntent = clamp(0.58 + contact * 0.24 + (count.strikes >= 2 ? 0.18 : 0.0)
                                     - swing.powerIntent * 0.10 - chasePenalty * 0.45
                                     + (zoneSwing ? decisionConfidence * 0.18 : 0.0), 0.05, 0.98);
-    swing.batSpeed = clamp(62.0 + batter.power * 0.28 + swing.powerIntent * 4.5 + random.real(-3.0, 3.0), 52.0, 95.0);
-    swing.attackAngle = clamp(1.5 + power * 6.0 + swing.powerIntent * 5.0 + random.real(-7.0, 7.0), -12.0, 25.0);
+    swing.batSpeed = clamp(62.0 + batter.power * 0.27 + swing.powerIntent * 4.3 + random.real(-3.0, 3.0), 52.0, 95.0);
+    swing.attackAngle = clamp(1.5 + power * 5.5 + swing.powerIntent * 4.8 + random.real(-7.0, 7.0), -12.0, 25.0);
     swing.timingError = clamp(random.real(-0.16, 0.16)
                                   + pitchDifficulty * random.real(-0.35, 0.35)
                                   + (chaseSwing ? random.real(-0.08, 0.08) : 0.0)

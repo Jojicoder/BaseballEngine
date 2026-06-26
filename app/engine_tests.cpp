@@ -3,8 +3,10 @@
 #include "BallPhysicsEngine.h"
 #include "JsonExporter.h"
 #include "PlayResolutionEngine.h"
+#include "Random.h"
+#include "RunExpectancy.h"
+#include "test_support.h"
 
-#include <cassert>
 #include <cstdint>
 #include <iostream>
 #include <optional>
@@ -13,27 +15,78 @@
 namespace {
 
 joji::Player createBatter() {
-    return {"Test Batter", joji::Position::CenterField, 72, 64, 68, 74, 61, 55, 35, 34, 32};
+    joji::Player player;
+    player.name = "Test Batter";
+    player.position = joji::Position::CenterField;
+    player.contact = 72;
+    player.power = 64;
+    player.eye = 68;
+    player.speed = 74;
+    player.fielding = 61;
+    player.arm = 55;
+    player.pitchingVelocity = 35;
+    player.pitchingControl = 34;
+    player.pitchingStuff = 32;
+    return player;
 }
 
 joji::Player createPitcher() {
-    return {"Test Pitcher", joji::Position::Pitcher, 41, 48, 45, 38, 50, 64, 82, 61, 77};
+    joji::Player player;
+    player.name = "Test Pitcher";
+    player.position = joji::Position::Pitcher;
+    player.contact = 41;
+    player.power = 48;
+    player.eye = 45;
+    player.speed = 38;
+    player.fielding = 50;
+    player.arm = 64;
+    player.pitchingVelocity = 82;
+    player.pitchingControl = 61;
+    player.pitchingStuff = 77;
+    return player;
 }
 
 void testCountRules() {
-    assert(!joji::isWalk({3, 0}));
-    assert(joji::isWalk({4, 0}));
-    assert(!joji::isStrikeOut({0, 2}));
-    assert(joji::isStrikeOut({0, 3}));
+    CHECK(!joji::isWalk({3, 0}));
+    CHECK(joji::isWalk({4, 0}));
+    CHECK(!joji::isStrikeOut({0, 2}));
+    CHECK(joji::isStrikeOut({0, 3}));
 
     joji::Count count{0, 2};
     count = joji::afterFoul(count);
-    assert(count.balls == 0);
-    assert(count.strikes == 2);
+    CHECK(count.balls == 0);
+    CHECK(count.strikes == 2);
 
     count = joji::afterBall({3, 1});
-    assert(count.balls == 4);
-    assert(count.strikes == 1);
+    CHECK(count.balls == 4);
+    CHECK(count.strikes == 1);
+}
+
+void testChanceFromRoll() {
+    CHECK(!joji::chanceFromRoll(0.0, 0.0));
+    CHECK(!joji::chanceFromRoll(-1.0, -10.0));
+    CHECK(joji::chanceFromRoll(1.0, 0.999));
+    CHECK(joji::chanceFromRoll(1.5, 100.0));
+    CHECK(joji::chanceFromRoll(0.25, 0.249));
+    CHECK(!joji::chanceFromRoll(0.25, 0.25));
+    CHECK(!joji::chanceFromRoll(0.25, 0.90));
+}
+
+void testRunExpectancyTable() {
+    CHECK(joji::runExpectancy(0, true, false, false)
+          > joji::runExpectancy(0, false, false, false));
+    CHECK(joji::runExpectancy(0, false, true, false)
+          > joji::runExpectancy(1, false, true, false));
+
+    joji::GameState state;
+    state.outs = 0;
+    state.bases[0] = "Runner";
+    const joji::RunExpectancyDelta steal =
+        joji::stealRunExpectancyDelta(state, 1, 2);
+    CHECK(steal.success > steal.current);
+    CHECK(steal.failure < steal.current);
+    CHECK(steal.breakEvenSuccessRate > 0.60);
+    CHECK(steal.breakEvenSuccessRate < 0.80);
 }
 
 void testAtBatTerminates() {
@@ -41,14 +94,14 @@ void testAtBatTerminates() {
     joji::AtBatEngine engine;
     const joji::AtBatResult result = engine.simulatePlateAppearance(createBatter(), createPitcher(), random);
 
-    assert(!result.pitchLogs.empty());
-    assert(result.finalOutcome == joji::AtBatOutcome::Walk ||
+    CHECK(!result.pitchLogs.empty());
+    CHECK(result.finalOutcome == joji::AtBatOutcome::Walk ||
            result.finalOutcome == joji::AtBatOutcome::StrikeOut ||
            result.finalOutcome == joji::AtBatOutcome::InPlay ||
            result.finalOutcome == joji::AtBatOutcome::HitByPitch);
 
     if (result.finalOutcome == joji::AtBatOutcome::InPlay) {
-        assert(result.battedBallInput.has_value());
+        CHECK(result.battedBallInput.has_value());
     }
 }
 
@@ -66,15 +119,15 @@ void testBallPhysicsAndResolution() {
     input.sideSpin = 0.0;
 
     const joji::BattedBall ball = physics.simulate(input);
-    assert(ball.estimatedDistance > 250.0);
-    assert(!ball.trajectory.empty());
-    assert(!ball.bounceTrajectory.empty());
-    assert(ball.hangTime > 0.0);
-    assert(ball.maxHeight > 0.0);
-    assert(ball.finalRestPoint.y >= ball.landingPoint.y);
+    CHECK(ball.estimatedDistance > 250.0);
+    CHECK(!ball.trajectory.empty());
+    CHECK(!ball.bounceTrajectory.empty());
+    CHECK(ball.hangTime > 0.0);
+    CHECK(ball.maxHeight > 0.0);
+    CHECK(ball.finalRestPoint.y >= ball.landingPoint.y);
 
     const joji::PlayResolution resolution = resolver.resolve(ball, state, random);
-    assert(resolution.type == joji::PlayOutcomeType::Out ||
+    CHECK(resolution.type == joji::PlayOutcomeType::Out ||
            resolution.type == joji::PlayOutcomeType::Single ||
            resolution.type == joji::PlayOutcomeType::Double ||
            resolution.type == joji::PlayOutcomeType::Triple ||
@@ -104,9 +157,9 @@ void testFieldingPhysicsBoundaries() {
 
     joji::Random groundRandom{std::optional<std::uint32_t>{123}};
     const joji::PlayResolution ground = resolver.resolve(deepGrounder, state, groundRandom);
-    assert(ground.fielderId != 0); // pitcher should not chase deep grounders into the outfield
+    CHECK(ground.fielderId != 0); // pitcher should not chase deep grounders into the outfield
     if (ground.fielderId >= 0 && ground.fieldingOutcome == joji::FieldingOutcomeType::FieldedCleanly) {
-        assert(ground.fieldingPoint.y <= 175.0);
+        CHECK(ground.fieldingPoint.y <= 175.0);
     }
 
     joji::BattedBall foulFly;
@@ -124,9 +177,51 @@ void testFieldingPhysicsBoundaries() {
 
     joji::Random foulRandom{std::optional<std::uint32_t>{456}};
     const joji::PlayResolution foul = resolver.resolve(foulFly, state, foulRandom);
-    assert(foul.type == joji::PlayOutcomeType::Out);
-    assert(foul.fieldingOutcome == joji::FieldingOutcomeType::Caught);
-    assert(foul.fielderId >= 0);
+    CHECK(foul.type == joji::PlayOutcomeType::Out);
+    CHECK(foul.fieldingOutcome == joji::FieldingOutcomeType::Caught);
+    CHECK(foul.fielderId >= 0);
+}
+
+void testDeterministicFieldingBoundaries() {
+    joji::PlayResolutionEngine resolver;
+    joji::GameState state;
+    joji::Random random{std::optional<std::uint32_t>{999}};
+
+    joji::BattedBall foulGrounder;
+    foulGrounder.exitVelocity = 55.0;
+    foulGrounder.launchAngle = -12.0;
+    foulGrounder.sprayAngle = -55.0;
+    foulGrounder.estimatedDistance = 35.0;
+    foulGrounder.hangTime = 0.2;
+    foulGrounder.maxHeight = 1.0;
+    foulGrounder.landsFair = false;
+    foulGrounder.classification = "ground ball";
+    foulGrounder.landingPoint = {-42.0, 8.0, 0.0};
+    foulGrounder.finalRestPoint = {-55.0, 12.0, 0.0};
+
+    const joji::PlayResolution foul = resolver.resolve(foulGrounder, state, random);
+    CHECK(foul.type == joji::PlayOutcomeType::Foul);
+    CHECK(foul.outsRecorded == 0);
+    CHECK(foul.fielderId == -1);
+
+    joji::BattedBall homeRun;
+    homeRun.exitVelocity = 108.0;
+    homeRun.launchAngle = 30.0;
+    homeRun.sprayAngle = 4.0;
+    homeRun.estimatedDistance = 410.0;
+    homeRun.hangTime = 4.8;
+    homeRun.maxHeight = 95.0;
+    homeRun.landsFair = true;
+    homeRun.crossesFence = true;
+    homeRun.fenceCrossHeight = 18.0;
+    homeRun.classification = "fly ball";
+    homeRun.landingPoint = {20.0, 410.0, 0.0};
+    homeRun.finalRestPoint = homeRun.landingPoint;
+
+    const joji::PlayResolution homer = resolver.resolve(homeRun, state, random);
+    CHECK(homer.type == joji::PlayOutcomeType::HomeRun);
+    CHECK(homer.basesAwarded == 4);
+    CHECK(homer.outsRecorded == 0);
 }
 
 void testAnimationPlanBuilder() {
@@ -161,23 +256,23 @@ void testAnimationPlanBuilder() {
     joji::AnimationPlanBuilder builder;
     const joji::AnimationPlan plan = builder.build(atBat, resolution, ball, joji::DefenseAlignment{}, "test-game");
 
-    assert(plan.gameId == "test-game");
-    assert(plan.hasPitch);
-    assert(plan.pitch.batterName == atBat.batter.name);
-    assert(plan.pitch.pitcherName == atBat.pitcher.name);
-    assert(plan.pitch.isInPlay);
-    assert(plan.pitch.durationSeconds > 0.0);
-    assert(!plan.pitch.points.empty());
+    CHECK(plan.gameId == "test-game");
+    CHECK(plan.hasPitch);
+    CHECK(plan.pitch.batterName == atBat.batter.name);
+    CHECK(plan.pitch.pitcherName == atBat.pitcher.name);
+    CHECK(plan.pitch.isInPlay);
+    CHECK(plan.pitch.durationSeconds > 0.0);
+    CHECK(!plan.pitch.points.empty());
 
-    assert(plan.hasBattedBall);
-    assert(plan.battedBall.result == "single");
-    assert(plan.battedBall.durationSeconds >= ball.hangTime);
-    assert(plan.battedBall.estimatedDistance == ball.estimatedDistance);
-    assert(!plan.battedBall.points.empty());
-    assert(plan.runners.empty());
-    assert(plan.totalDurationSeconds >= plan.pitch.durationSeconds);
-    assert(plan.totalDurationSeconds >= plan.battedBall.durationSeconds);
-    assert(!plan.replayTimeline.events.empty());
+    CHECK(plan.hasBattedBall);
+    CHECK(plan.battedBall.result == "single");
+    CHECK(plan.battedBall.durationSeconds >= ball.hangTime);
+    CHECK(plan.battedBall.estimatedDistance == ball.estimatedDistance);
+    CHECK(!plan.battedBall.points.empty());
+    CHECK(plan.runners.empty());
+    CHECK(plan.totalDurationSeconds >= plan.pitch.durationSeconds);
+    CHECK(plan.totalDurationSeconds >= plan.battedBall.durationSeconds);
+    CHECK(!plan.replayTimeline.events.empty());
     bool hasPitchEvent = false;
     bool hasContactEvent = false;
     bool hasBallFlightEvent = false;
@@ -189,45 +284,55 @@ void testAnimationPlanBuilder() {
         hasBallFlightEvent = hasBallFlightEvent || event.type == joji::ReplayEventType::BallFlight;
         hasFieldEvent = hasFieldEvent || event.type == joji::ReplayEventType::Field;
         hasResultEvent = hasResultEvent || event.type == joji::ReplayEventType::Result;
-        assert(event.timeSeconds >= 0.0);
+        CHECK(event.timeSeconds >= 0.0);
     }
-    assert(hasPitchEvent);
-    assert(hasContactEvent);
-    assert(hasBallFlightEvent);
-    assert(hasFieldEvent);
-    assert(hasResultEvent);
+    CHECK(hasPitchEvent);
+    CHECK(hasContactEvent);
+    CHECK(hasBallFlightEvent);
+    CHECK(hasFieldEvent);
+    CHECK(hasResultEvent);
 
     const joji::ReplayCursor startCursor =
         joji::cursorForReplayTimeline(plan.replayTimeline, 0.0);
-    assert(startCursor.activeEventIndex.has_value() || startCursor.nextEventIndex.has_value());
-    assert(startCursor.phase == joji::ReplayPhase::Pitch);
+    CHECK(startCursor.activeEventIndex.has_value() || startCursor.nextEventIndex.has_value());
+    CHECK(startCursor.phase == joji::ReplayPhase::Pitch);
 
     const joji::ReplayCursor endCursor =
         joji::cursorForReplayTimeline(plan.replayTimeline, plan.totalDurationSeconds + 1.0);
-    assert(endCursor.activeEventIndex.has_value());
-    assert(endCursor.phase == joji::ReplayPhase::Result);
+    CHECK(endCursor.activeEventIndex.has_value());
+    CHECK(endCursor.phase == joji::ReplayPhase::Result);
 
     const std::string json = joji::exportAnimationPlanToJson(plan);
-    assert(json.find("\"schemaName\": \"joji.replay.timeline\"") != std::string::npos);
-    assert(json.find("\"pitch\"") != std::string::npos);
-    assert(json.find("\"battedBall\"") != std::string::npos);
-    assert(json.find("\"runners\"") != std::string::npos);
-    assert(json.find("\"defenders\"") != std::string::npos);
-    assert(json.find("\"throws\"") != std::string::npos);
-    assert(json.find("\"runnerMovements\"") != std::string::npos);
-    assert(json.find("\"throwMovements\"") != std::string::npos);
-    assert(json.find("\"tagPlays\"") != std::string::npos);
-    assert(json.find("\"defensiveDecision\"") != std::string::npos);
+    CHECK(json.find("\"schemaName\": \"joji.replay.timeline\"") != std::string::npos);
+    CHECK(json.find("\"pitch\"") != std::string::npos);
+    CHECK(json.find("\"battedBall\"") != std::string::npos);
+    CHECK(json.find("\"runners\"") != std::string::npos);
+    CHECK(json.find("\"defenders\"") != std::string::npos);
+    CHECK(json.find("\"throws\"") != std::string::npos);
+    CHECK(json.find("\"runnerMovements\"") != std::string::npos);
+    CHECK(json.find("\"throwMovements\"") != std::string::npos);
+    CHECK(json.find("\"tagPlays\"") != std::string::npos);
+    CHECK(json.find("\"defensiveDecision\"") != std::string::npos);
+    CHECK(joji_tests::isValidJson(json));
 }
 
 } // namespace
 
 int main() {
     testCountRules();
+    testChanceFromRoll();
+    testRunExpectancyTable();
     testAtBatTerminates();
     testBallPhysicsAndResolution();
     testFieldingPhysicsBoundaries();
+    testDeterministicFieldingBoundaries();
     testAnimationPlanBuilder();
+    joji_tests::testJsonSyntaxChecker();
+
+    if (joji_tests::failures > 0) {
+        std::cerr << "engine_tests: " << joji_tests::failures << " failure(s)\n";
+        return 1;
+    }
 
     std::cout << "engine_tests: ok\n";
     return 0;

@@ -29,6 +29,8 @@ struct PlayerBoxScore {
     int assists          = 0;
     int errors           = 0;
     int outfieldAssists  = 0;  // 本塁刺殺の外野補殺
+    int rangeChances     = 0;  // candidate fielding plays with travel/available timing
+    int rangePlays       = 0;  // range chances converted into a clean play/catch
 };
 
 struct PitcherBoxScore {

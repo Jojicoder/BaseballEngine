@@ -6,6 +6,8 @@
 
 namespace joji {
 
+bool chanceFromRoll(double probability, double roll);
+
 class Random {
 public:
     explicit Random(std::optional<std::uint32_t> seed = std::nullopt);

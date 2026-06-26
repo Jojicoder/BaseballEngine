@@ -1765,13 +1765,13 @@ bool GameEngine::simulateNextPitch() {
                 const bool weakHitter = battingOrderPos >= 6
                                      || currentBatter.contact < 65;
                 // イニング補正 (早い回はバントしにくい)
-                const double inningMult = state_.inning >= 7 ? 2.0
-                                        : state_.inning >= 5 ? 1.2
-                                        : 0.5;
+                const double inningMult = state_.inning >= 7 ? 1.35
+                                        : state_.inning >= 5 ? 0.75
+                                        : 0.25;
                 // 1塁走者のみ (得点圏ではない) → バント価値高い
-                const double situMult = (r1B && !r2B) ? 1.3 : 0.7;
-                buntProb = (weakHitter ? 0.11 : 0.04) * inningMult * situMult;
-                buntProb = std::min(buntProb, 0.30);
+                const double situMult = (r1B && !r2B) ? 1.0 : 0.45;
+                buntProb = (weakHitter ? 0.055 : 0.015) * inningMult * situMult;
+                buntProb = std::min(buntProb, 0.12);
             }
         }
         // スクイズプレー: 3塁走者 + 1死以下 + 接戦
@@ -1781,7 +1781,7 @@ bool GameEngine::simulateNextPitch() {
             if (std::abs(battingScore2 - pitchingScore2) <= 1) {
                 const Player& cur = battingTeam().currentBatter();
                 const bool weakHitter2 = cur.contact < 65;
-                buntProb = std::max(buntProb, weakHitter2 ? 0.22 : 0.08);
+                buntProb = std::max(buntProb, weakHitter2 ? 0.12 : 0.035);
             }
         }
         currentAtBat_.buntIntent = (buntProb > 0.0 && random_.chance(buntProb));
@@ -2203,13 +2203,13 @@ PlayResult GameEngine::simulateAtBat(const Player& batter, const Player& /*pitch
     const bool r3B = state_.bases[2].has_value();
     const bool buntSituation = (r1B || r2B) && !r3B && state_.outs < 2;
     const bool weakHitter = batter.contact + batter.power < 105;
-    double buntProb = buntSituation ? (weakHitter ? 0.12 : 0.05) : 0.0;
+    double buntProb = buntSituation ? (weakHitter ? 0.055 : 0.018) : 0.0;
     // スクイズプレー: 3塁走者 + 1死以下 + 接戦
     if (r3B && state_.outs <= 1) {
         const int bs = state_.isTop ? state_.awayScore : state_.homeScore;
         const int ps = state_.isTop ? state_.homeScore : state_.awayScore;
         if (std::abs(bs - ps) <= 1)
-            buntProb = std::max(buntProb, weakHitter ? 0.22 : 0.08);
+            buntProb = std::max(buntProb, weakHitter ? 0.12 : 0.035);
     }
     const bool buntIntent = buntProb > 0.0 && random_.chance(buntProb);
     if (buntIntent) {
@@ -2309,11 +2309,11 @@ PlayResult GameEngine::applyPlay(const PlayResult& rawResult) {
                 && triplePlayShape
                 && random_.chance(state_.bases[2].has_value() ? 0.035 : 0.055);
             // DP 成立率: 走者速度と守備力を考慮 (速い走者 → 崩れやすい)
-            double dpChance = 0.32;
+            double dpChance = 0.27;
             if (state_.bases[0].has_value()) {
                 for (const auto& p : battingTeam().lineup()) {
                     if (p.name == *state_.bases[0]) {
-                        dpChance = std::clamp(0.32 - (p.speed - 60) * 0.004, 0.14, 0.46);
+                        dpChance = std::clamp(0.27 - (p.speed - 60) * 0.0035, 0.10, 0.40);
                         break;
                     }
                 }
@@ -2333,7 +2333,7 @@ PlayResult GameEngine::applyPlay(const PlayResult& rawResult) {
                 && state_.bases[0].has_value()
                 && !state_.bases[1].has_value()
                 && state_.outs < 2
-                && random_.chance(0.28);
+                && random_.chance(0.20);
 
             if (tpEligible) {
                 const std::string runnerFromSecond = *state_.bases[1];
@@ -2416,7 +2416,7 @@ PlayResult GameEngine::applyPlay(const PlayResult& rawResult) {
                     const double armPen  = (fArm - 128.0) * 0.006;
                     const double spdBon  = (runnerSpd - 55) * 0.003;
                     const double distBon = (result.battedBall.estimatedDistance - 280.0) * 0.0004;
-                    const double pSafe   = std::clamp(0.88 - armPen + spdBon + distBon, 0.62, 0.97);
+                    const double pSafe   = std::clamp(0.82 - armPen + spdBon + distBon, 0.55, 0.94);
 
                     result.outsRecorded = 1;  // 打者は必ずアウト
                     battingBoxScore().sacFlyAttempts++;    // SFA: 常にカウント
@@ -2428,7 +2428,7 @@ PlayResult GameEngine::applyPlay(const PlayResult& rawResult) {
                         makeDecisionContext(state_, result, 4, 0));
                     result.defensiveDecision = decision;
                     const bool runnerAttempts =
-                        runnerAttemptsTimedAdvance(tag, pSafe, 0.10, 0.97, random_);
+                        runnerAttemptsTimedAdvance(tag, pSafe, 0.06, 0.92, random_);
                     if (!runnerAttempts) {
                         state_.bases[2] = runner;
                         battingBoxScore().atBats += 1;
@@ -2486,7 +2486,7 @@ PlayResult GameEngine::applyPlay(const PlayResult& rawResult) {
                     }
                     const double depthBon = (result.battedBall.estimatedDistance - 195.0) * 0.0025;
                     const double spdBon2  = (runnerSpd - 55) * 0.004;
-                    const double pTag     = std::clamp(0.50 + depthBon + spdBon2, 0.25, 0.88);
+                    const double pTag     = std::clamp(0.38 + depthBon + spdBon2, 0.15, 0.78);
                     double fArm = 128.0;
                     for (const auto& f : pitchingDefenseAlignment().fielders) {
                         if (f.name == result.fielderName) { fArm = f.armStrength; break; }
@@ -2497,7 +2497,7 @@ PlayResult GameEngine::applyPlay(const PlayResult& rawResult) {
                         {makeThrowOption(tag, 0.20, 0.68)},
                         makeDecisionContext(state_, result, 3, 0));
                     result.defensiveDecision = decision;
-                    if (runnerAttemptsTimedAdvance(tag, pTag, 0.06, 0.92, random_)) {
+                    if (runnerAttemptsTimedAdvance(tag, pTag, 0.03, 0.82, random_)) {
                         if (!decision.holdBall && decision.chosenTargetBase == 3) {
                             result.throwDecision = makeDefensiveThrowDecision(result,
                                                                               decision,
@@ -2757,12 +2757,12 @@ void GameEngine::advanceRunnersForHit(PlayResult& result, int bases) {
                 const double armPen    = (fielderArm - 128.0) * 0.007;
                 const double spdBon    = (spd - 55) * 0.006;
                 // 2アウトなら迷わず走る
-                const double pScoreBase = twoOuts ? 0.82 : 0.60;
-                const double pScore     = std::clamp(pScoreBase + spdBon - armPen + sprayBon, 0.30, 0.92);
+                const double pScoreBase = twoOuts ? 0.82 : 0.62;
+                const double pScore     = std::clamp(pScoreBase + spdBon - armPen + sprayBon, 0.30, 0.94);
                 TagPlay tag = resolveTagChallenge(runner, i + 1, 4, spd,
                                                   fielderArm, result, twoOuts);
                 const double pChallenge = timedAdvanceProbability(
-                    tag, pScore, twoOuts ? 0.12 : 0.03, 0.97);
+                    tag, pScore, twoOuts ? 0.08 : 0.025, 0.92);
                 if (random_.chance(pChallenge)) {
                     DefensiveDecision decision = chooseDefensiveDecision(
                         {makeThrowOption(tag, 1.0, 0.25)},
@@ -2790,12 +2790,12 @@ void GameEngine::advanceRunnersForHit(PlayResult& result, int bases) {
                 const int spd = getRunnerSpeed(runner);
                 const double spdBon  = (spd - 55) * 0.007;
                 const double pThird  = twoOuts
-                    ? std::clamp(0.55 + spdBon + sprayBon, 0.25, 0.82)
-                    : std::clamp(0.31 + spdBon + sprayBon * 0.5, 0.10, 0.62);
+                    ? std::clamp(0.44 + spdBon + sprayBon, 0.18, 0.74)
+                    : std::clamp(0.23 + spdBon + sprayBon * 0.5, 0.06, 0.52);
                 TagPlay tag = resolveTagChallenge(runner, i + 1, 3, spd,
                                                   fielderArm, result, twoOuts);
                 const double pChallenge = timedAdvanceProbability(
-                    tag, pThird, twoOuts ? 0.08 : 0.02, 0.90);
+                    tag, pThird, twoOuts ? 0.04 : 0.008, 0.70);
                 if (random_.chance(pChallenge)) {
                     if (contestedThrowBase == 0) {
                         DefensiveDecision decision = chooseDefensiveDecision(
@@ -2834,12 +2834,12 @@ void GameEngine::advanceRunnersForHit(PlayResult& result, int bases) {
                 const int spd = getRunnerSpeed(runner);
                 const double armPen    = (fielderArm - 128.0) * 0.007;
                 const double spdBon    = (spd - 55) * 0.006;
-                const double pScoreBase = twoOuts ? 0.78 : 0.52;
-                const double pScore     = std::clamp(pScoreBase + spdBon - armPen + sprayBon, 0.28, 0.90);
+                const double pScoreBase = twoOuts ? 0.76 : 0.54;
+                const double pScore     = std::clamp(pScoreBase + spdBon - armPen + sprayBon, 0.26, 0.90);
                 TagPlay tag = resolveTagChallenge(runner, i + 1, 4, spd,
                                                   fielderArm, result, twoOuts);
                 const double pChallenge = timedAdvanceProbability(
-                    tag, pScore, twoOuts ? 0.10 : 0.03, 0.95);
+                    tag, pScore, twoOuts ? 0.065 : 0.02, 0.88);
                 if (random_.chance(pChallenge)) {
                     DefensiveDecision decision = chooseDefensiveDecision(
                         {makeThrowOption(tag, 1.0, 0.30)},
@@ -3002,348 +3002,6 @@ void GameEngine::advanceRunnersForError(PlayResult& result) {
     }
 }
 
-void GameEngine::advanceRunnersForWalk(PlayResult& result) {
-    if (state_.bases[0] && state_.bases[1] && state_.bases[2]) {
-        scoreRunner(result, *state_.bases[2]);
-        state_.bases[2] = state_.bases[1];
-        state_.bases[1] = state_.bases[0];
-    } else if (state_.bases[0] && state_.bases[1]) {
-        state_.bases[2] = state_.bases[1];
-        state_.bases[1] = state_.bases[0];
-    } else if (state_.bases[0]) {
-        state_.bases[1] = state_.bases[0];
-    }
-
-    state_.bases[0] = result.batterName;
-    result.events.push_back(result.batterName + " takes first base.");
-}
-
-void GameEngine::advanceAllRunnersOneBase(const std::string& reason) {
-    // 3塁走者がいればホームに生還
-    if (state_.bases[2].has_value()) {
-        const std::string runner = *state_.bases[2];
-        state_.bases[2].reset();
-        if (state_.isTop) { state_.awayScore += 1; }
-        else              { state_.homeScore += 1; }
-        currentHalfInningRuns_ += 1;
-        currentPitcherRunsAllowed() += 1;
-        logs_.push_back(GameLog{state_.inning, state_.isTop, runner + " scores on " + reason + "."});
-    }
-    state_.bases[2] = state_.bases[1];
-    state_.bases[1] = state_.bases[0];
-    state_.bases[0].reset();
-}
-
-void GameEngine::checkPickoff() {
-    if (!atBatInProgress_) return;
-
-    // 牽制対象: 1B優先、次に2B (毎投球1回まで)
-    for (int baseIdx = 0; baseIdx <= 1; ++baseIdx) {
-        if (!state_.bases[static_cast<std::size_t>(baseIdx)].has_value()) continue;
-        const std::string runner = *state_.bases[static_cast<std::size_t>(baseIdx)];
-        const int baseNum = baseIdx + 1;
-
-        // 試み確率: 1Bは 2%、2Bは 0.5%
-        const double attemptProb = (baseIdx == 0) ? 0.012 : 0.003;
-        if (!random_.chance(attemptProb)) continue;
-        battingBoxScore().pickoffAttempts++;
-
-        const int afterPitch = static_cast<int>(currentAtBat_.pitchLogs.size());
-
-        // 走者の足
-        int runnerSpd = 55;
-        for (const auto& p : battingTeam().lineup()) {
-            if (p.name == runner) { runnerSpd = p.speed; break; }
-        }
-        // 守備側の1Bまたは2Bの送球力
-        const FieldPosition targetPos = (baseIdx == 0) ? FieldPosition::FirstBase
-                                                       : FieldPosition::SecondBase;
-        double fielderArm = 128.0;
-        for (const auto& f : pitchingDefenseAlignment().fielders) {
-            if (f.position == targetPos) { fielderArm = f.armStrength; break; }
-        }
-
-        const double spdFactor  = (runnerSpd - 55) * 0.005;
-        const double armFactor  = (fielderArm - 128.0) * 0.002;
-        const double outProb    = std::clamp(0.30 - spdFactor + armFactor, 0.12, 0.52);
-
-        if (random_.chance(outProb)) {
-            // 牽制アウト
-            battingBoxScore().pickoffOuts++;
-            state_.bases[static_cast<std::size_t>(baseIdx)].reset();
-            state_.outs += 1;
-            logs_.push_back(GameLog{state_.inning, state_.isTop,
-                "PO: " + runner + " picked off at " + std::to_string(baseNum) + "B!"});
-            currentAtBat_.baseRunningEvents.push_back({
-                BaseRunningEventType::PickoffOut, runner, baseNum, baseNum, false, afterPitch});
-        } else {
-            // 牽制試み、走者セーフ
-            logs_.push_back(GameLog{state_.inning, state_.isTop,
-                "PO attempt: " + runner + " safe at " + std::to_string(baseNum) + "B."});
-            currentAtBat_.baseRunningEvents.push_back({
-                BaseRunningEventType::PickoffAttempt, runner, baseNum, baseNum, false, afterPitch});
-        }
-        break; // 1投球につき1塁のみ
-    }
-}
-
-void GameEngine::checkStolenBase() {
-    if (!atBatInProgress_) return;
-    // Never steal on 3-0, or with bases loaded (nowhere to go)
-    const Count& count = currentAtBat_.count;
-    if (count.balls == 3 && count.strikes == 0) return;
-    if (state_.outs >= 3) return;
-
-    // Pitcher tempo factor: faster delivery → less time for runner to get a lead.
-    // Off-speed pitches (longer delivery) → easier to steal.
-    double tempoAdj = 0.0;
-    if (!currentAtBat_.pitchLogs.empty()) {
-        const auto& lastLog = currentAtBat_.pitchLogs.back();
-        const double vel = lastLog.pitch.pitchVelocity;
-        tempoAdj = -(vel - 88.0) * 0.001;  // -0.007 at 95 mph, +0.003 at 85 mph
-        const PitchType pt = lastLog.pitch.pitchType;
-        if (pt == PitchType::Curveball || pt == PitchType::Changeup || pt == PitchType::Splitter) {
-            tempoAdj += 0.010;  // slow delivery = easier jump
-        }
-    }
-
-    // Catcher arm strength (shared for all steal scenarios)
-    double catcherArm = 128.0;
-    for (const auto& f : pitchingDefenseAlignment().fielders) {
-        if (f.position == FieldPosition::Catcher) { catcherArm = f.armStrength; break; }
-    }
-    const double armFactor = (catcherArm - 128.0) * 0.003;
-
-    // Helper lambda: apply one steal attempt
-    auto attemptSteal = [&](const std::string& runner, int fromBase, int toBase,
-                             double baseAttemptProb, double baseSuccessProb) {
-        int runnerSpd = 55;
-        for (const auto& p : battingTeam().lineup()) {
-            if (p.name == runner) { runnerSpd = p.speed; break; }
-        }
-        const double spdFactor = (runnerSpd - 55) * 0.004;
-        const double prob = std::clamp(baseAttemptProb + spdFactor + tempoAdj, 0.002, 0.18);
-        if (!random_.chance(prob)) return;
-
-        const std::string baseName = (toBase == 2) ? "2B" : "3B";
-        battingBoxScore().stolenBaseAttempts++;
-        const double successProb = std::clamp(baseSuccessProb + spdFactor - armFactor, 0.38, 0.92);
-        const bool   success     = random_.chance(successProb);
-        const int    afterPitch  = static_cast<int>(currentAtBat_.pitchLogs.size());
-
-        if (success) {
-            battingBoxScore().stolenBases++;
-            state_.bases[static_cast<std::size_t>(fromBase - 1)].reset();
-            state_.bases[static_cast<std::size_t>(toBase   - 1)] = runner;
-            logs_.push_back(GameLog{state_.inning, state_.isTop,
-                "SB: " + runner + " steals " + baseName + "."});
-            currentAtBat_.baseRunningEvents.push_back({
-                BaseRunningEventType::StolenBase, runner, fromBase, toBase, false, afterPitch});
-            for (auto& p : battingPlayerStats()) {
-                if (p.name == runner) { p.stolenBases++; break; }
-            }
-        } else {
-            battingBoxScore().caughtStealing++;
-            state_.bases[static_cast<std::size_t>(fromBase - 1)].reset();
-            state_.outs += 1;
-            logs_.push_back(GameLog{state_.inning, state_.isTop,
-                "CS: " + runner + " caught stealing " + baseName + "."});
-            currentAtBat_.baseRunningEvents.push_back({
-                BaseRunningEventType::CaughtStealing, runner, fromBase, toBase, false, afterPitch});
-            for (auto& p : battingPlayerStats()) {
-                if (p.name == runner) { p.caughtStealing++; break; }
-            }
-            for (auto& p : pitchingPlayerStats()) {
-                if (p.position == Position::Catcher) { p.caughtStealing++; break; }
-            }
-        }
-    };
-
-    const bool on1B = state_.bases[0].has_value();
-    const bool on2B = state_.bases[1].has_value();
-    const bool on3B = state_.bases[2].has_value();
-
-    // 状況別の盗塁試み確率補正
-    {
-        const int battingScoreSB  = state_.isTop ? state_.awayScore : state_.homeScore;
-        const int pitchingScoreSB = state_.isTop ? state_.homeScore : state_.awayScore;
-        const int leadSB = battingScoreSB - pitchingScoreSB;
-        // 大差でリードなら走塁アウトリスクを避ける; 大差ビハインドは1点より複数点が必要
-        if (leadSB >= 4 || leadSB <= -4) return;
-    }
-    const int battingScoreSB  = state_.isTop ? state_.awayScore : state_.homeScore;
-    const int pitchingScoreSB = state_.isTop ? state_.homeScore : state_.awayScore;
-    const int leadSB = battingScoreSB - pitchingScoreSB;
-
-    // situMult: 終盤・接戦ほど積極的; 2アウトは投球と同時スタートで成功率UP
-    double situMult = 1.0;
-    if (std::abs(leadSB) <= 1 && state_.inning >= 7) situMult = 1.6; // 終盤・接戦
-    else if (std::abs(leadSB) <= 1)                  situMult = 1.2; // 接戦
-    else if (leadSB >= 2)                             situMult = 0.7; // リード中はリスク回避
-    if (state_.outs == 2) situMult *= 1.3; // 2アウトは積極走塁
-
-    // Double steal: 1B+2B occupied, 3B open → both runners go simultaneously
-    if (on1B && on2B && !on3B) {
-        // Attempt probability is lower for coordinated double steal
-        const std::string r1 = *state_.bases[0];
-        const std::string r2 = *state_.bases[1];
-        int spd1 = 55;
-        for (const auto& p : battingTeam().lineup())
-            if (p.name == r1) { spd1 = p.speed; break; }
-        const double spdFactor1 = (spd1 - 55) * 0.004;
-        if (random_.chance(std::clamp(0.060 * situMult + spdFactor1 + tempoAdj, 0.002, 0.18))) {
-            const int afterPitch = static_cast<int>(currentAtBat_.pitchLogs.size());
-            battingBoxScore().stolenBaseAttempts += 2;
-            // Lead runner (2B→3B) resolves first; if caught, trail runner may abort
-            int spd2 = 55;
-            for (const auto& p : battingTeam().lineup())
-                if (p.name == r2) { spd2 = p.speed; break; }
-            const double spdF2 = (spd2 - 55) * 0.004;
-            const bool leadSuccess = random_.chance(std::clamp(0.77 + spdF2 - armFactor, 0.38, 0.92));
-            const bool trailSuccess = random_.chance(std::clamp(0.81 + spdFactor1 - armFactor * 0.6, 0.42, 0.92));
-
-            if (leadSuccess) {
-                battingBoxScore().stolenBases++;
-                state_.bases[1].reset();
-                state_.bases[2] = r2;
-                logs_.push_back(GameLog{state_.inning, state_.isTop, "SB: " + r2 + " steals 3B (double steal)."});
-                currentAtBat_.baseRunningEvents.push_back(
-                    {BaseRunningEventType::StolenBase, r2, 2, 3, false, afterPitch});
-                for (auto& p : battingPlayerStats()) if (p.name == r2) { p.stolenBases++; break; }
-            } else {
-                battingBoxScore().caughtStealing++;
-                state_.bases[1].reset();
-                state_.outs += 1;
-                logs_.push_back(GameLog{state_.inning, state_.isTop, "CS: " + r2 + " caught stealing 3B."});
-                currentAtBat_.baseRunningEvents.push_back(
-                    {BaseRunningEventType::CaughtStealing, r2, 2, 3, false, afterPitch});
-                for (auto& p : battingPlayerStats()) if (p.name == r2) { p.caughtStealing++; break; }
-                for (auto& p : pitchingPlayerStats()) if (p.position == Position::Catcher) { p.caughtStealing++; break; }
-            }
-            if (state_.outs < 3) {
-                if (trailSuccess) {
-                    battingBoxScore().stolenBases++;
-                    state_.bases[0].reset();
-                    state_.bases[1] = r1;
-                    logs_.push_back(GameLog{state_.inning, state_.isTop, "SB: " + r1 + " steals 2B (double steal)."});
-                    currentAtBat_.baseRunningEvents.push_back(
-                        {BaseRunningEventType::StolenBase, r1, 1, 2, false, afterPitch});
-                    for (auto& p : battingPlayerStats()) if (p.name == r1) { p.stolenBases++; break; }
-                } else {
-                    battingBoxScore().caughtStealing++;
-                    state_.bases[0].reset();
-                    state_.outs += 1;
-                    logs_.push_back(GameLog{state_.inning, state_.isTop, "CS: " + r1 + " caught stealing 2B."});
-                    currentAtBat_.baseRunningEvents.push_back(
-                        {BaseRunningEventType::CaughtStealing, r1, 1, 2, false, afterPitch});
-                    for (auto& p : battingPlayerStats()) if (p.name == r1) { p.caughtStealing++; break; }
-                }
-            }
-        }
-        return;
-    }
-
-    // Single steal: 1B→2B (most common; 2B must be open)
-    if (on1B && !on2B) {
-        attemptSteal(*state_.bases[0], 1, 2, 0.100 * situMult, 0.83);
-    }
-
-    // Single steal: 2B→3B (less common; 3B must be open, 1B must be empty to avoid force-out risk)
-    if (on2B && !on3B && !on1B && state_.outs < 3) {
-        attemptSteal(*state_.bases[1], 2, 3, 0.050 * situMult, 0.77);
-    }
-}
-
-void GameEngine::checkWildPitchPassedBall() {
-    if (!atBatInProgress_ || currentAtBat_.pitchLogs.empty()) return;
-    const auto& log = currentAtBat_.pitchLogs.back();
-    if (log.pitchOutcome == PitchOutcome::InPlay) return;
-    if (!state_.bases[0].has_value() && !state_.bases[1].has_value() && !state_.bases[2].has_value()) return;
-
-    const double vel    = log.pitch.pitchVelocity;
-    const double wpProb = std::clamp(0.014 + (vel - 85.0) * 0.00022, 0.006, 0.030);
-    const double pbProb = 0.005;
-    const int    after  = static_cast<int>(currentAtBat_.pitchLogs.size()); // 1-indexed pitch number
-
-    BaseRunningEventType evType;
-    if (random_.chance(wpProb)) {
-        evType = BaseRunningEventType::WildPitch;
-        pitchingBoxScore().wildPitches++;
-        logs_.push_back(GameLog{state_.inning, state_.isTop, "Wild pitch!"});
-    } else if (random_.chance(pbProb)) {
-        evType = BaseRunningEventType::PassedBall;
-        pitchingBoxScore().passedBalls++;
-        logs_.push_back(GameLog{state_.inning, state_.isTop, "Passed ball!"});
-    } else {
-        return;
-    }
-    // advance all runners and record event per runner
-    if (state_.bases[2].has_value()) {
-        currentAtBat_.baseRunningEvents.push_back(
-            {evType, *state_.bases[2], 3, 4, true, after});
-    }
-    if (state_.bases[1].has_value()) {
-        currentAtBat_.baseRunningEvents.push_back(
-            {evType, *state_.bases[1], 2, 3, false, after});
-    }
-    if (state_.bases[0].has_value()) {
-        currentAtBat_.baseRunningEvents.push_back(
-            {evType, *state_.bases[0], 1, 2, false, after});
-    }
-    advanceAllRunnersOneBase(evType == BaseRunningEventType::WildPitch ? "wild pitch" : "passed ball");
-}
-
-void GameEngine::checkBalk() {
-    if (!atBatInProgress_) return;
-    const bool runnersOn = state_.bases[0].has_value()
-                        || state_.bases[1].has_value()
-                        || state_.bases[2].has_value();
-    if (!runnersOn) return;
-
-    if (random_.chance(0.0015)) {
-        pitchingBoxScore().balks++;
-        logs_.push_back(GameLog{state_.inning, state_.isTop, "Balk! All runners advance."});
-        const int after = static_cast<int>(currentAtBat_.pitchLogs.size());
-        if (state_.bases[2].has_value())
-            currentAtBat_.baseRunningEvents.push_back(
-                {BaseRunningEventType::Balk, *state_.bases[2], 3, 4, true, after});
-        if (state_.bases[1].has_value())
-            currentAtBat_.baseRunningEvents.push_back(
-                {BaseRunningEventType::Balk, *state_.bases[1], 2, 3, false, after});
-        if (state_.bases[0].has_value())
-            currentAtBat_.baseRunningEvents.push_back(
-                {BaseRunningEventType::Balk, *state_.bases[0], 1, 2, false, after});
-        advanceAllRunnersOneBase("balk");
-    }
-}
-
-void GameEngine::scoreRunner(PlayResult& result, const std::string& runnerName) {
-    if (state_.isTop) {
-        state_.awayScore += 1;
-    } else {
-        state_.homeScore += 1;
-    }
-    result.runsScored += 1;
-    currentHalfInningRuns_ += 1;
-    currentPitcherRunsAllowed() += 1;
-    result.events.push_back(runnerName + " scores.");
-
-    // 引き継いだ走者のスコア追跡
-    PitcherSitTracker& sit = currentSit();
-    auto it = std::find(sit.inheritedRunners.begin(), sit.inheritedRunners.end(), runnerName);
-    if (it != sit.inheritedRunners.end()) {
-        sit.inheritedRunnersScored++;
-        sit.inheritedRunners.erase(it);
-    }
-
-    // Blown Save: セーブ状況でリードが消えた瞬間
-    if (sit.inSaveSit && !sit.blownSave) {
-        const int myScore  = state_.isTop ? state_.homeScore : state_.awayScore;
-        const int oppScore = state_.isTop ? state_.awayScore : state_.homeScore;
-        if (oppScore >= myScore) sit.blownSave = true;
-    }
-}
-
 void GameEngine::recordPitchingPlay(const PlayResult& result) {
     auto& pstats = state_.isTop ? homePitcherStats_ : awayPitcherStats_;
     PitcherBoxScore& p = findOrAddPitcher(pstats, currentPitcher(), false);
@@ -3393,6 +3051,27 @@ void GameEngine::recordDefensivePlay(const PlayResult& result) {
     };
 
     PlayerBoxScore* primary = findByName(result.fielderName);
+    if (primary == nullptr) {
+        if (result.fielderName == "P") primary = findByPosition(Position::Pitcher);
+        else if (result.fielderName == "C") primary = findByPosition(Position::Catcher);
+        else if (result.fielderName == "1B") primary = findByPosition(Position::FirstBase);
+        else if (result.fielderName == "2B") primary = findByPosition(Position::SecondBase);
+        else if (result.fielderName == "3B") primary = findByPosition(Position::ThirdBase);
+        else if (result.fielderName == "SS") primary = findByPosition(Position::Shortstop);
+        else if (result.fielderName == "LF") primary = findByPosition(Position::LeftField);
+        else if (result.fielderName == "CF") primary = findByPosition(Position::CenterField);
+        else if (result.fielderName == "RF") primary = findByPosition(Position::RightField);
+    }
+    if (primary == nullptr && result.fielderId >= 0) {
+        primary = findByPosition(static_cast<Position>(result.fielderId));
+    }
+    if (primary != nullptr) {
+        primary->rangeChances += 1;
+        if (result.fieldingOutcome == FieldingOutcomeType::Caught
+            || result.fieldingOutcome == FieldingOutcomeType::FieldedCleanly) {
+            primary->rangePlays += 1;
+        }
+    }
     if (result.fieldingOutcome == FieldingOutcomeType::Error) {
         if (primary != nullptr) {
             primary->errors += 1;

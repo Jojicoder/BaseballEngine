@@ -33,9 +33,11 @@ SwingDecision SwingDecisionEngine::decide(const Player& batter, const Pitch& pit
                          || (pitcherHand == ThrowingHand::Left  && batter.battingSide == BattingSide::Left);
     const double handednessChase = sameHanded ? 0.07 : -0.06;
 
-    double probability = zone ? 0.43 : (chase ? 0.12 : 0.04);
+    // Lower chase baseline keeps walk rate and OBP in a modern league-average band
+    // without changing strikeout/contact physics.
+    double probability = zone ? 0.43 : (chase ? 0.105 : 0.032);
     probability += contact * 0.09;
-    probability -= eye * (zone ? 0.03 : 0.20);
+    probability -= eye * (zone ? 0.03 : 0.22);
     // 2-strike plate protection: high-contact batters expand their zone more when
     // protecting the plate — they can handle borderline pitches that poor-contact
     // batters foul off or miss. Scales from 0.02 (poor contact) to 0.11 (elite).
@@ -46,7 +48,7 @@ SwingDecision SwingDecisionEngine::decide(const Player& batter, const Pitch& pit
     probability += pitch.pitchQuality > 0.72 ? -0.06 : 0.0;
     if (chase) probability += handednessChase;
     // chaseRate: high = swings more at off-zone, low = lays off
-    if (!zone) probability += chaseAdj * 0.12;
+    if (!zone) probability += chaseAdj * 0.10;
     probability = clamp(probability, zone ? 0.05 : 0.03, 0.88);
 
     SwingDecision decision;

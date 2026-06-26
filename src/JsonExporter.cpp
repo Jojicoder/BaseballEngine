@@ -40,6 +40,15 @@ std::string intArray(const std::vector<int>& v) {
     return out + "]";
 }
 
+std::string stringArray(const std::vector<std::string>& v) {
+    std::string out = "[";
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        if (i > 0) out += ",";
+        out += q(v[i]);
+    }
+    return out + "]";
+}
+
 std::string resultTypeName(GameResultType t) {
     switch (t) {
         case GameResultType::AwayWin: return "AwayWin";
@@ -320,7 +329,10 @@ std::string playerJson(const PlayerBoxScore& p, const std::string& indent) {
     s += indent + "  " + q("obp")        + ": " + dbl(obp)  + ",\n";
     s += indent + "  " + q("slg")        + ": " + dbl(slg)  + ",\n";
     s += indent + "  " + q("ops")        + ": " + dbl(obp + slg) + ",\n";
-    s += indent + "  " + q("woba")       + ": " + dbl(woba) + "\n";
+    s += indent + "  " + q("woba")       + ": " + dbl(woba) + ",\n";
+    s += indent + "  " + q("rangeChances") + ": " + std::to_string(p.rangeChances) + ",\n";
+    s += indent + "  " + q("rangePlays")   + ": " + std::to_string(p.rangePlays) + ",\n";
+    s += indent + "  " + q("rangeRate")    + ": " + dbl(safeRate(p.rangePlays, p.rangeChances)) + "\n";
     s += indent + "}";
     return s;
 }
@@ -375,6 +387,36 @@ std::string playerArrayJson(const std::vector<PlayerBoxScore>& players,
 }
 
 } // namespace
+
+std::string jsonString(const std::string& value) {
+    return q(value);
+}
+
+std::string exportGameScoreToJson(const GameState& state) {
+    return "{"
+        + q("away") + ":" + std::to_string(state.awayScore)
+        + "," + q("home") + ":" + std::to_string(state.homeScore)
+        + "}";
+}
+
+std::string exportBasesToJson(const GameState& state) {
+    auto base = [](const std::optional<std::string>& runner) {
+        return runner.has_value() ? q(*runner) : std::string("null");
+    };
+    return "{"
+        + q("first") + ":" + base(state.bases[0])
+        + "," + q("second") + ":" + base(state.bases[1])
+        + "," + q("third") + ":" + base(state.bases[2])
+        + "}";
+}
+
+std::string exportNullableIntArrayToJson(const std::vector<int>& values) {
+    return intArray(values);
+}
+
+std::string exportStringArrayToJson(const std::vector<std::string>& values) {
+    return stringArray(values);
+}
 
 std::string exportGameToJson(const GameEngine& engine) {
     const GameResult r = engine.result();

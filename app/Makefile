@@ -20,10 +20,12 @@ ENGINE_SOURCES := \
 	../src/BallPhysicsEngine.cpp \
 	../src/ContactEngine.cpp \
 	../src/GameEngine.cpp \
+	../src/GameEngineBaseRunning.cpp \
 	../src/JsonExporter.cpp \
 	../src/PitchEngine.cpp \
 	../src/PlayResolutionEngine.cpp \
 	../src/Random.cpp \
+	../src/RunExpectancy.cpp \
 	../src/SwingDecisionEngine.cpp \
 	../src/SwingEngine.cpp \
 	../src/Teams.cpp \
@@ -35,6 +37,7 @@ SFML_SOURCES := visual_main.cpp \
 ATBAT_SOURCES := atbat_debug.cpp \
 	$(ENGINE_SOURCES)
 TEST_SOURCES := engine_tests.cpp \
+	json_tests.cpp \
 	$(ENGINE_SOURCES)
 STATS_SOURCES := stats_runner.cpp \
 	$(ENGINE_SOURCES)
@@ -44,11 +47,14 @@ SEASON_SOURCES := season_runner.cpp \
 	$(ENGINE_SOURCES)
 LEAGUE_SOURCES := league_runner.cpp \
 	$(ENGINE_SOURCES)
+GAME_EXPORT_TARGET := $(BUILD_DIR)/JojiGameExport
+GAME_EXPORT_SOURCES := game_export.cpp \
+	$(ENGINE_SOURCES)
 PITCHCHECK_TARGET := $(BUILD_DIR)/JojiPitchCheck
 PITCHCHECK_SOURCES := pitch_scoring_check.cpp \
 	$(ENGINE_SOURCES)
 
-.PHONY: all run sfml sfml-run atbat atbat-run test stats stats-run analysis analysis-run season season-run league league-run pitchcheck clean
+.PHONY: all run sfml sfml-run atbat atbat-run test stats stats-run analysis analysis-run season season-run league league-run pitchcheck game-export clean
 
 all: $(TARGET)
 
@@ -126,6 +132,12 @@ pitchcheck: $(PITCHCHECK_TARGET)
 $(PITCHCHECK_TARGET): $(PITCHCHECK_SOURCES)
 	mkdir -p $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(PITCHCHECK_SOURCES) -o $(PITCHCHECK_TARGET)
+
+game-export: $(GAME_EXPORT_TARGET)
+
+$(GAME_EXPORT_TARGET): $(GAME_EXPORT_SOURCES)
+	mkdir -p $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(GAME_EXPORT_SOURCES) -o $(GAME_EXPORT_TARGET)
 
 clean:
 	rm -rf $(BUILD_DIR)
