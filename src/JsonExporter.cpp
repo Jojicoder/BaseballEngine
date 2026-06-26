@@ -316,7 +316,9 @@ std::string playerJson(const PlayerBoxScore& p, const std::string& indent) {
 
     std::string s = indent + "{\n";
     s += indent + "  " + q("name")       + ": " + q(p.name)                    + ",\n";
+    s += indent + "  " + q("age")        + ": " + std::to_string(p.age)        + ",\n";
     s += indent + "  " + q("atBats")     + ": " + std::to_string(p.atBats)     + ",\n";
+    s += indent + "  " + q("runs")       + ": " + std::to_string(p.runs)       + ",\n";
     s += indent + "  " + q("hits")       + ": " + std::to_string(p.hits)       + ",\n";
     s += indent + "  " + q("doubles")    + ": " + std::to_string(p.doubles)    + ",\n";
     s += indent + "  " + q("triples")    + ": " + std::to_string(p.triples)    + ",\n";
@@ -349,8 +351,10 @@ std::string pitcherJson(const PitcherBoxScore& p, const std::string& indent) {
 
     std::string s = indent + "{\n";
     s += indent + "  " + q("name")          + ": " + q(p.name)                       + ",\n";
-    s += indent + "  " + q("wins")           + ": " + std::to_string(p.wins)  + ",\n";
-    s += indent + "  " + q("saves")          + ": " + std::to_string(p.saves) + ",\n";
+    s += indent + "  " + q("wins")           + ": " + std::to_string(p.wins)   + ",\n";
+    s += indent + "  " + q("losses")         + ": " + std::to_string(p.losses) + ",\n";
+    s += indent + "  " + q("saves")          + ": " + std::to_string(p.saves)  + ",\n";
+    s += indent + "  " + q("pitches")        + ": " + std::to_string(p.pitches) + ",\n";
     s += indent + "  " + q("ip")            + ": " + ipStr.str()                     + ",\n";
     s += indent + "  " + q("hitsAllowed")   + ": " + std::to_string(p.hitsAllowed)   + ",\n";
     s += indent + "  " + q("earnedRuns")    + ": " + std::to_string(p.earnedRuns)    + ",\n";
@@ -435,7 +439,24 @@ std::string exportGameToJson(const GameEngine& engine) {
     s += "  " + q("awayPlayerStats")  + ": " + playerArrayJson(engine.awayPlayerStats(),   "  ") + ",\n";
     s += "  " + q("homePlayerStats")  + ": " + playerArrayJson(engine.homePlayerStats(),   "  ") + ",\n";
     s += "  " + q("awayPitcherStats") + ": " + pitcherArrayJson(engine.awayPitcherStats(), "  ") + ",\n";
-    s += "  " + q("homePitcherStats") + ": " + pitcherArrayJson(engine.homePitcherStats(), "  ") + "\n";
+    s += "  " + q("homePitcherStats") + ": " + pitcherArrayJson(engine.homePitcherStats(), "  ") + ",\n";
+
+    // Determine win/loss/save pitchers
+    auto findPitcherWith = [](const std::vector<PitcherBoxScore>& stats,
+                               auto pred) -> std::string {
+        for (const auto& p : stats)
+            if (pred(p)) return p.name;
+        return "";
+    };
+    const bool awayWon = r.awayScore > r.homeScore;
+    const auto& winStats  = awayWon ? engine.awayPitcherStats() : engine.homePitcherStats();
+    const auto& lossStats = awayWon ? engine.homePitcherStats() : engine.awayPitcherStats();
+    const std::string wp = findPitcherWith(winStats,  [](const PitcherBoxScore& p){ return p.wins   > 0; });
+    const std::string lp = findPitcherWith(lossStats, [](const PitcherBoxScore& p){ return p.losses > 0; });
+    const std::string sp = findPitcherWith(winStats,  [](const PitcherBoxScore& p){ return p.saves  > 0; });
+    s += "  " + q("winPitcher")  + ": " + q(wp) + ",\n";
+    s += "  " + q("lossPitcher") + ": " + q(lp) + ",\n";
+    s += "  " + q("savePitcher") + ": " + (sp.empty() ? "null" : q(sp)) + "\n";
 
     s += "}\n";
     return s;

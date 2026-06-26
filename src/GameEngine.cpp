@@ -998,6 +998,10 @@ int GameEngine::currentPitcherPitchCount() const {
 void GameEngine::addPitchCount(int n) {
     if (state_.isTop) state_.homePitcherPitchCount += n;
     else              state_.awayPitcherPitchCount += n;
+
+    auto& pstats = state_.isTop ? homePitcherStats_ : awayPitcherStats_;
+    PitcherBoxScore& pbs = findOrAddPitcher(pstats, currentPitcher(), false);
+    pbs.pitches += n;
 }
 
 const Player& GameEngine::currentPitcher() const {
@@ -1147,6 +1151,15 @@ void GameEngine::finalizeGameStats() {
 
     finalizeLast(currentAwayPitcher_, awaySit_, awayPitcherStats_, awayWon, awayStarterPotentialWin_);
     finalizeLast(currentHomePitcher_, homeSit_, homePitcherStats_, homeWon, homeStarterPotentialWin_);
+
+    // Assign loss to the pitcher responsible (last pitcher for losing team)
+    if (awayWon) {
+        PitcherBoxScore& lp = findOrAddPitcher(homePitcherStats_, currentHomePitcher_, false);
+        lp.losses++;
+    } else if (homeWon) {
+        PitcherBoxScore& lp = findOrAddPitcher(awayPitcherStats_, currentAwayPitcher_, false);
+        lp.losses++;
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

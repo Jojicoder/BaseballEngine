@@ -142,6 +142,39 @@ struct BallparkConfig {
     static BallparkConfig stallionsField() {
         return {"Stallions Field", 7.0, 410.0, 376.0, 332.0, 0.0, 69.0};
     }
+
+    // ── League C — DC/MD/VA district ballparks ───────────────────────────────
+    // Georgetown Ravens — Ravens Nest
+    // Riverside park on the Potomac. Brick walls, prevailing river wind out to LF.
+    // Hitter-friendly, especially left-handed power.
+    static BallparkConfig ravensNest() {
+        return {"Ravens Nest", 7.5, 402.0, 360.0, 318.0, 0.0, 74.0, 5.0};
+    }
+    // Capitol Hill Senators — Capitol Park
+    // Symmetrical park built near the Hill. Neutral, respects pitcher craft.
+    static BallparkConfig capitolPark() {
+        return {"Capitol Park", 7.0, 406.0, 370.0, 325.0, 0.0, 71.0};
+    }
+    // Anacostia Kings — Kings Yard
+    // Intimate ballpark, short porch in RF. Best HR park in the South division.
+    static BallparkConfig kingsYard() {
+        return {"Kings Yard", 7.0, 400.0, 355.0, 306.0, 0.0, 74.0};
+    }
+    // Alexandria Cannons — Cannon Field
+    // Classic Virginia ballpark. Slightly elevated, aiding fly balls.
+    static BallparkConfig cannonField() {
+        return {"Cannon Field", 7.0, 404.0, 366.0, 322.0, 50.0, 72.0};
+    }
+    // Bethesda Blaze — Blaze Arena
+    // Modern suburban stadium. Neutral dimensions, turf infield.
+    static BallparkConfig blazeArena() {
+        return {"Blaze Arena", 7.0, 405.0, 368.0, 324.0, 0.0, 71.0};
+    }
+    // Silver Spring Ghosts — Silver Spring Stadium
+    // Pitcher's ballpark. Deep alleys, tall outfield wall suppresses HRs.
+    static BallparkConfig silverSpringStadium() {
+        return {"Silver Spring Stadium", 8.0, 414.0, 378.0, 336.0, 0.0, 68.0};
+    }
 };
 
 struct PlayResolution {

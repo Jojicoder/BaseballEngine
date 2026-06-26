@@ -1,0 +1,120 @@
+{
+  "leagueName": "Joji Baseball League",
+  "leagueAbbr": "JBL",
+  "season": 2026,
+
+  "divisions": [
+    {
+      "id": "north",
+      "name": "North Division",
+      "teams": [
+        "Newark Knights",
+        "Queens Titans",
+        "Brooklyn Hammers",
+        "Bronx Wolves",
+        "Harlem Eagles",
+        "Staten Island Foxes"
+      ]
+    },
+    {
+      "id": "mid",
+      "name": "Mid Division",
+      "teams": [
+        "Fishtown Ferals",
+        "Kensington Iron",
+        "Germantown Colonials",
+        "Manayunk Runners",
+        "Fairmount Rams",
+        "South Philly Stallions"
+      ]
+    },
+    {
+      "id": "south",
+      "name": "South Division",
+      "teams": [
+        "Georgetown Ravens",
+        "Capitol Hill Senators",
+        "Anacostia Kings",
+        "Alexandria Cannons",
+        "Bethesda Blaze",
+        "Silver Spring Ghosts"
+      ]
+    }
+  ],
+
+  "ballparks": {
+    "Newark Knights":          "Knights Field",
+    "Queens Titans":           "Queens Coliseum",
+    "Brooklyn Hammers":        "Iron Yard",
+    "Bronx Wolves":            "Wolf Den",
+    "Harlem Eagles":           "Eagle Park",
+    "Staten Island Foxes":     "Fox Field",
+    "Fishtown Ferals":         "Ferals Field",
+    "Kensington Iron":         "Iron Works",
+    "Germantown Colonials":    "Colonial Field",
+    "Manayunk Runners":        "Canal Park",
+    "Fairmount Rams":          "Fairmount Field",
+    "South Philly Stallions":  "Stallions Field",
+    "Georgetown Ravens":       "Ravens Nest",
+    "Capitol Hill Senators":   "Capitol Park",
+    "Anacostia Kings":         "Kings Yard",
+    "Alexandria Cannons":      "Cannon Field",
+    "Bethesda Blaze":          "Blaze Arena",
+    "Silver Spring Ghosts":    "Silver Spring Stadium"
+  },
+
+  "schedule": {
+    "gamesPerSeason": 162,
+    "divisionGames": 90,
+    "seriesVsDivisionOpponent": 18,
+    "interDivisionGames": 72,
+    "seriesVsInterDivisionOpponent": 6,
+    "startingRotationSlots": 5
+  },
+
+  "playoffs": {
+    "totalTeams": 6,
+    "qualifiers": {
+      "divisionChamps": 3,
+      "wildCards": 3
+    },
+    "seeding": "divisionChamp1 > divisionChamp2 > divisionChamp3 > WC1 > WC2 > WC3 by record",
+    "rounds": [
+      {
+        "name": "ワイルドカードラウンド",
+        "matchups": ["#4 vs #5", "#3 vs #6"],
+        "format": "best-of-3",
+        "higherSeedHosts": true
+      },
+      {
+        "name": "準決勝",
+        "matchups": ["#1 vs WC winner", "#2 vs WC winner"],
+        "format": "best-of-5",
+        "higherSeedHosts": true
+      },
+      {
+        "name": "JBL日本シリーズ",
+        "matchups": ["semifinal winner vs semifinal winner"],
+        "format": "best-of-7",
+        "higherSeedHosts": true
+      }
+    ]
+  },
+
+  "calendar": [
+    { "name": "キャンプ",               "start": "2026-02-01", "end": "2026-03-05", "notes": "春季キャンプ" },
+    { "name": "オープン戦",             "start": "2026-03-10", "end": "2026-03-27", "notes": "オープン戦 (無印)" },
+    { "name": "開幕",                   "start": "2026-04-03", "end": null,          "notes": "Opening Day" },
+    { "name": "前半戦",                 "start": "2026-04-03", "end": "2026-07-10", "notes": "前半戦レギュラーシーズン" },
+    { "name": "前半戦終了",             "start": "2026-07-10", "end": null,          "notes": "前半戦最終日" },
+    { "name": "オールスター",           "start": "2026-07-14", "end": "2026-07-15", "notes": "JBL All-Star Game" },
+    { "name": "後半戦開始",             "start": "2026-07-17", "end": null,          "notes": "後半戦初日" },
+    { "name": "後半戦",                 "start": "2026-07-17", "end": "2026-09-25", "notes": "後半戦レギュラーシーズン" },
+    { "name": "レギュラーシーズン終了", "start": "2026-09-25", "end": null,          "notes": "162試合完了" },
+    { "name": "プレーオフ",             "start": "2026-10-01", "end": "2026-10-20", "notes": "WC→準決勝" },
+    { "name": "JBL日本シリーズ",        "start": "2026-10-22", "end": "2026-10-31", "notes": "チャンピオンシップシリーズ (最大7戦)" },
+    { "name": "ドラフト",               "start": "2026-11-07", "end": null,          "notes": "アマチュアドラフト" },
+    { "name": "FA解禁",                 "start": "2026-11-15", "end": null,          "notes": "フリーエージェント解禁" },
+    { "name": "契約更改",               "start": "2026-11-15", "end": "2026-12-31", "notes": "年俸調停・契約更改期間" }
+  ]
+}

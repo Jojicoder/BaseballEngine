@@ -316,6 +316,10 @@ void GameEngine::scoreRunner(PlayResult& result, const std::string& runnerName) 
     currentPitcherRunsAllowed() += 1;
     result.events.push_back(runnerName + " scores.");
 
+    for (auto& p : battingPlayerStats()) {
+        if (p.name == runnerName) { p.runs++; break; }
+    }
+
     PitcherSitTracker& sit = currentSit();
     auto it = std::find(sit.inheritedRunners.begin(), sit.inheritedRunners.end(), runnerName);
     if (it != sit.inheritedRunners.end()) {

@@ -212,7 +212,82 @@ int main(int argc, char* argv[]) {
         if (i + 1 < events.size()) std::cout << ",";
         std::cout << "\n";
     }
-    std::cout << "  ]\n";
+    std::cout << "  ],\n";
+
+    // box scores + win/loss/save pitcher (via exportGameToJson fields)
+    const auto& awayPS = engine.awayPlayerStats();
+    const auto& homePS = engine.homePlayerStats();
+    const auto& awayPit = engine.awayPitcherStats();
+    const auto& homePit = engine.homePitcherStats();
+
+    // helper: emit pitcher array inline
+    auto emitPitcherArray = [&](const std::vector<joji::PitcherBoxScore>& v) {
+        std::cout << "[\n";
+        for (std::size_t i = 0; i < v.size(); ++i) {
+            const auto& p = v[i];
+            double ip = p.outsRecorded / 3.0;
+            double era = ip > 0 ? p.earnedRuns * 9.0 / ip : 0.0;
+            std::cout << "    {\"name\":" << joji::jsonString(p.name)
+                      << ",\"wins\":"    << p.wins
+                      << ",\"losses\":"  << p.losses
+                      << ",\"saves\":"   << p.saves
+                      << ",\"pitches\":" << p.pitches
+                      << ",\"ip\":"      << std::fixed << std::setprecision(1) << ip
+                      << ",\"hits\":"    << p.hitsAllowed
+                      << ",\"er\":"      << p.earnedRuns
+                      << ",\"bb\":"      << p.walks
+                      << ",\"k\":"       << p.strikeouts
+                      << ",\"era\":"     << std::setprecision(2) << era
+                      << "}";
+            if (i + 1 < v.size()) std::cout << ",";
+            std::cout << "\n";
+        }
+        std::cout << "  ]";
+    };
+
+    auto emitPlayerArray = [&](const std::vector<joji::PlayerBoxScore>& v) {
+        std::cout << "[\n";
+        for (std::size_t i = 0; i < v.size(); ++i) {
+            const auto& p = v[i];
+            double avg = p.atBats > 0 ? static_cast<double>(p.hits) / p.atBats : 0.0;
+            std::cout << "    {\"name\":" << joji::jsonString(p.name)
+                      << ",\"age\":"  << p.age
+                      << ",\"ab\":"   << p.atBats
+                      << ",\"r\":"    << p.runs
+                      << ",\"h\":"    << p.hits
+                      << ",\"2b\":"   << p.doubles
+                      << ",\"3b\":"   << p.triples
+                      << ",\"hr\":"   << p.homeRuns
+                      << ",\"rbi\":"  << p.rbi
+                      << ",\"bb\":"   << p.walks
+                      << ",\"k\":"    << p.strikeouts
+                      << ",\"avg\":"  << std::fixed << std::setprecision(3) << avg
+                      << "}";
+            if (i + 1 < v.size()) std::cout << ",";
+            std::cout << "\n";
+        }
+        std::cout << "  ]";
+    };
+
+    // win/loss/save pitcher names
+    auto findName = [](const std::vector<joji::PitcherBoxScore>& v, auto pred) -> std::string {
+        for (const auto& p : v) if (pred(p)) return p.name;
+        return "";
+    };
+    const bool awayWon = gr.awayScore > gr.homeScore;
+    const auto& winPit  = awayWon ? awayPit : homePit;
+    const auto& lossPit = awayWon ? homePit : awayPit;
+    std::string wp = findName(winPit,  [](const joji::PitcherBoxScore& p){ return p.wins   > 0; });
+    std::string lp = findName(lossPit, [](const joji::PitcherBoxScore& p){ return p.losses > 0; });
+    std::string sp = findName(winPit,  [](const joji::PitcherBoxScore& p){ return p.saves  > 0; });
+
+    std::cout << "  \"winPitcher\":"  << joji::jsonString(wp) << ",\n";
+    std::cout << "  \"lossPitcher\":" << joji::jsonString(lp) << ",\n";
+    std::cout << "  \"savePitcher\":" << (sp.empty() ? "null" : joji::jsonString(sp)) << ",\n";
+    std::cout << "  \"awayPlayerStats\": "; emitPlayerArray(awayPS); std::cout << ",\n";
+    std::cout << "  \"homePlayerStats\": "; emitPlayerArray(homePS); std::cout << ",\n";
+    std::cout << "  \"awayPitcherStats\": "; emitPitcherArray(awayPit); std::cout << ",\n";
+    std::cout << "  \"homePitcherStats\": "; emitPitcherArray(homePit); std::cout << "\n";
     std::cout << "}\n";
 
     return 0;

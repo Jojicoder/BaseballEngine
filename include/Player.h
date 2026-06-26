@@ -87,6 +87,7 @@ enum class PlayerRole {
 
 struct Player {
     std::string name;
+    int age             = 27;
     Position    position        = Position::CenterField;
     int contact         = 50;
     int power           = 50;
