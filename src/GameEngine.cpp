@@ -832,6 +832,7 @@ static std::vector<PlayerBoxScore> initPlayerStats(const Team& team) {
         PlayerBoxScore pbs;
         pbs.name = p.name;
         pbs.position = p.position;
+        pbs.age = p.age;
         stats.push_back(pbs);
     }
     return stats;
