@@ -18,14 +18,18 @@
 #include <iostream>
 #include <map>
 #include <optional>
+#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
 
 namespace {
 
-constexpr int kIntraSeries = 12;
+constexpr int kIntraSeries = 18;
 constexpr int kInterSeries = 6;
+constexpr int kExpectedSeasonGames = 1458;
+constexpr int kRegularSeasonDays = 178;
+constexpr int kSeasonRounds = 162;
 
 struct CliOptions {
     bool seasonMode = false;
@@ -57,6 +61,44 @@ struct TeamStanding {
     int ra = 0;
 };
 
+struct PendingGame {
+    int awayIdx = 0;
+    int homeIdx = 0;
+    int dayIndex = 0;
+};
+
+std::vector<std::vector<std::pair<int, int>>> roundRobinRounds(std::vector<int> teamIndices) {
+    std::vector<std::vector<std::pair<int, int>>> rounds;
+    const int teamCount = static_cast<int>(teamIndices.size());
+    if (teamCount % 2 != 0 || teamCount < 2) return rounds;
+
+    std::vector<int> rotation = teamIndices;
+    for (int round = 0; round < teamCount - 1; ++round) {
+        std::vector<std::pair<int, int>> pairs;
+        for (int i = 0; i < teamCount / 2; ++i) {
+            pairs.push_back({rotation[static_cast<std::size_t>(i)],
+                             rotation[static_cast<std::size_t>(teamCount - 1 - i)]});
+        }
+        rounds.push_back(pairs);
+
+        const int moved = rotation.back();
+        for (int i = teamCount - 1; i > 1; --i) {
+            rotation[static_cast<std::size_t>(i)] = rotation[static_cast<std::size_t>(i - 1)];
+        }
+        rotation[1] = moved;
+    }
+    return rounds;
+}
+
+std::string leagueLabel(joji::League league) {
+    switch (league) {
+        case joji::League::A: return "North League";
+        case joji::League::B: return "Mid League";
+        case joji::League::C: return "South League";
+    }
+    return "JBL";
+}
+
 std::string todayDate() {
     const std::time_t t = std::time(nullptr);
     std::tm* tm = std::localtime(&t);
@@ -65,11 +107,11 @@ std::string todayDate() {
     return dateBuf;
 }
 
-std::string dateForGame(int season, int gameNumber) {
+std::string dateForDay(int season, int dayIndex) {
     std::tm tm{};
     tm.tm_year = season - 1900;
     tm.tm_mon = 3;
-    tm.tm_mday = 1 + gameNumber / 6;
+    tm.tm_mday = 1 + dayIndex;
     std::mktime(&tm);
     char dateBuf[16];
     std::strftime(dateBuf, sizeof(dateBuf), "%Y-%m-%d", &tm);
@@ -597,32 +639,81 @@ GameExport simulateGame(const std::vector<joji::Team>& baseTeams,
 std::vector<GameExport> generateSeason(const std::vector<joji::Team>& teams,
                                        int season,
                                        int limit) {
+    const int teamCount = static_cast<int>(teams.size());
+    std::vector<int> allTeamIndices;
+    allTeamIndices.reserve(teams.size());
+    for (int i = 0; i < teamCount; ++i) allTeamIndices.push_back(i);
+
+    std::map<joji::League, std::vector<int>> byLeague;
+    for (int i = 0; i < teamCount; ++i) {
+        byLeague[teams[static_cast<std::size_t>(i)].league()].push_back(i);
+    }
+
+    const auto leagueRounds = roundRobinRounds(allTeamIndices);
+    std::vector<std::vector<std::pair<int, int>>> intraRounds;
+    for (int round = 0; round < 5; ++round) {
+        std::vector<std::pair<int, int>> combined;
+        for (const auto& entry : byLeague) {
+            const auto rounds = roundRobinRounds(entry.second);
+            combined.insert(combined.end(), rounds[static_cast<std::size_t>(round)].begin(),
+                            rounds[static_cast<std::size_t>(round)].end());
+        }
+        intraRounds.push_back(combined);
+    }
+
+    std::mt19937 rng(static_cast<uint32_t>(season * 2654435761u));
+    std::vector<PendingGame> scheduled;
+    scheduled.reserve(kExpectedSeasonGames);
+    auto appendRound = [&](int round, std::vector<std::pair<int, int>> pairs) {
+        const int dayIndex = kSeasonRounds > 1
+            ? (round * (kRegularSeasonDays - 1)) / (kSeasonRounds - 1)
+            : 0;
+        std::shuffle(pairs.begin(), pairs.end(), rng);
+        for (const auto& pair : pairs) {
+            const int a = pair.first;
+            const int b = pair.second;
+            if ((round % 2) == 0) {
+                scheduled.push_back(PendingGame{b, a, dayIndex});
+            } else {
+                scheduled.push_back(PendingGame{a, b, dayIndex});
+            }
+        }
+    };
+
+    int round = 0;
+    for (int cycle = 0; cycle < kInterSeries; ++cycle) {
+        for (const auto& pairs : leagueRounds) {
+            appendRound(round, pairs);
+            ++round;
+        }
+    }
+    for (int cycle = 0; cycle < kIntraSeries - kInterSeries; ++cycle) {
+        for (const auto& pairs : intraRounds) {
+            appendRound(round, pairs);
+            ++round;
+        }
+    }
+
     std::vector<GameExport> games;
     std::vector<int> teamGames(teams.size(), 0);
     int gameNumber = 0;
 
-    for (int i = 0; i < static_cast<int>(teams.size()); ++i) {
-        for (int j = i + 1; j < static_cast<int>(teams.size()); ++j) {
-            const int seriesLen = (teams[i].league() == teams[j].league()) ? kIntraSeries : kInterSeries;
-            for (int g = 0; g < seriesLen; ++g) {
-                if (limit > 0 && static_cast<int>(games.size()) >= limit) return games;
-                const bool flipHome = (g % 2) == 1;
-                const int awayIdx = flipHome ? j : i;
-                const int homeIdx = flipHome ? i : j;
-                const int awaySlot = teamGames[static_cast<std::size_t>(awayIdx)] % 5;
-                const int homeSlot = teamGames[static_cast<std::size_t>(homeIdx)] % 5;
-                teamGames[static_cast<std::size_t>(awayIdx)]++;
-                teamGames[static_cast<std::size_t>(homeIdx)]++;
+    for (const auto& scheduledGame : scheduled) {
+        if (limit > 0 && static_cast<int>(games.size()) >= limit) return games;
 
-                ++gameNumber;
-                const std::string gameId = std::to_string(season) + "-" +
-                    (gameNumber < 1000 ? std::string(3 - std::to_string(gameNumber).size(), '0') : "") +
-                    std::to_string(gameNumber);
-                const uint32_t seed = static_cast<uint32_t>(season * 100000 + gameNumber);
-                games.push_back(simulateGame(teams, awayIdx, homeIdx, season, seed,
-                                             awaySlot, homeSlot, dateForGame(season, gameNumber - 1), gameId));
-            }
-        }
+        const int awaySlot = teamGames[static_cast<std::size_t>(scheduledGame.awayIdx)] % 5;
+        const int homeSlot = teamGames[static_cast<std::size_t>(scheduledGame.homeIdx)] % 5;
+        teamGames[static_cast<std::size_t>(scheduledGame.awayIdx)]++;
+        teamGames[static_cast<std::size_t>(scheduledGame.homeIdx)]++;
+
+        ++gameNumber;
+        const std::string gameNumberText = std::to_string(gameNumber);
+        const std::string gameId = std::to_string(season) + "-" +
+            (gameNumber < 1000 ? std::string(3 - gameNumberText.size(), '0') : "") +
+            gameNumberText;
+        const uint32_t seed = static_cast<uint32_t>(season * 100000 + gameNumber);
+        games.push_back(simulateGame(teams, scheduledGame.awayIdx, scheduledGame.homeIdx, season, seed,
+                                     awaySlot, homeSlot, dateForDay(season, scheduledGame.dayIndex), gameId));
     }
 
     return games;
@@ -675,7 +766,7 @@ std::string seasonJson(const std::vector<joji::Team>& teams,
         const double pct = gamesPlayed > 0 ? static_cast<double>(s.wins) / gamesPlayed : 0.0;
         out << std::fixed << std::setprecision(3)
             << "    {\"name\":" << joji::jsonString(t.name())
-            << ",\"division\":" << joji::jsonString(t.league() == joji::League::A ? "League A" : "League B")
+            << ",\"division\":" << joji::jsonString(leagueLabel(t.league()))
             << ",\"slug\":" << joji::jsonString(teamSlug(t.name()))
             << ",\"wins\":" << s.wins
             << ",\"losses\":" << s.losses

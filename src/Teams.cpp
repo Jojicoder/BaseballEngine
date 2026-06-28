@@ -127,6 +127,7 @@ Team newarkKnights() {
 }
 
 // ── Queens Titans ─────────────────────────────────────────────────────────────
+// 投打のバランスが取れた名門。左腕エースと強打者を軸に、常に優勝争いに絡む。かつての覇者としての誇りを持つ。
 Team queensTitans() {
     return Team{
         "Queens Titans",
@@ -182,6 +183,7 @@ Team queensTitans() {
 }
 
 // ── Brooklyn Hammers ──────────────────────────────────────────────────────────
+// 長打力と強力なブルペンを武器にする打撃型チーム。Iron Yardのファンは最もうるさいことで知られる。
 Team brooklynHammers() {
     return Team{
         "Brooklyn Hammers",
@@ -237,6 +239,7 @@ Team brooklynHammers() {
 }
 
 // ── Bronx Wolves ──────────────────────────────────────────────────────────────
+// JBL最多優勝を誇る常勝軍団。エース・クローザーともにリーグ屈指の投手陣を擁し、打線も破壊力抜群。
 Team bronxWolves() {
     return Team{
         "Bronx Wolves",
@@ -292,6 +295,7 @@ Team bronxWolves() {
 }
 
 // ── Harlem Eagles ─────────────────────────────────────────────────────────────
+// コンタクト&スピードを磨いた伝統的スモールボール球団。打率・出塁率が高く、状況に応じた打撃が持ち味。
 Team harlemEagles() {
     return Team{
         "Harlem Eagles",
@@ -347,6 +351,7 @@ Team harlemEagles() {
 }
 
 // ── Staten Island Foxes ───────────────────────────────────────────────────────
+// 若手主体で再建中。先発陣は未完成だが育成力は高く、スカウティングへの投資を惜しまない。
 Team statenIslandFoxes() {
     return Team{
         "Staten Island Foxes",
@@ -402,6 +407,7 @@ Team statenIslandFoxes() {
 }
 
 // ── Fishtown Ferals ───────────────────────────────────────────────────────────
+// 強力な先発・ブルペンとパワーヒッターを兼ね備えた上位常連。荒削りながらも破壊力のある攻撃が持ち味。
 Team fishtownFerals() {
     return Team{
         "Fishtown Ferals",
@@ -458,6 +464,7 @@ Team fishtownFerals() {
 }
 
 // ── Kensington Iron ───────────────────────────────────────────────────────────
+// 堅実な投手陣と粘り強い打線。簡単には崩れない守備を誇り、コツコツと点を取る野球を実践する。
 Team kensingtonIron() {
     return Team{
         "Kensington Iron",
@@ -514,6 +521,7 @@ Team kensingtonIron() {
 }
 
 // ── Germantown Colonials ──────────────────────────────────────────────────────
+// 攻守ともに平均的な戦力を持つ。制球型の先発が多く、オーソドックスな野球を好む伝統球団。
 Team germantownColonials() {
     return Team{
         "Germantown Colonials",
@@ -570,6 +578,7 @@ Team germantownColonials() {
 }
 
 // ── Manayunk Runners ──────────────────────────────────────────────────────────
+// 全員が快足を武器にしたリーグ一のスモールボール球団。盗塁・バント・ヒットエンドランで相手を揺さぶる。
 Team manayunkRunners() {
     return Team{
         "Manayunk Runners",
@@ -626,6 +635,7 @@ Team manayunkRunners() {
 }
 
 // ── Fairmount Rams ────────────────────────────────────────────────────────────
+// 気持ちだけは誰にも負けないアンダードッグ。実力では劣るが、諦めない戦いぶりでファンを魅了する。
 Team fairmountRams() {
     return Team{
         "Fairmount Rams",
@@ -682,6 +692,7 @@ Team fairmountRams() {
 }
 
 // ── South Philly Stallions ────────────────────────────────────────────────────
+// 再建途中だが打線にコンタクト型の若手が多く、育成次第では数年後に化ける可能性を秘める。
 Team southPhillyStallions() {
     return Team{
         "South Philly Stallions",
@@ -737,6 +748,116 @@ Team southPhillyStallions() {
     };
 }
 
+Team southDivisionTeam(const std::string& teamName,
+                       BallparkConfig ballpark,
+                       std::vector<std::string> hitters,
+                       std::vector<std::string> starters,
+                       std::vector<std::string> relievers,
+                       std::vector<std::string> bench,
+                       int profile) {
+    const int bat = profile * 2;
+    const int pit = (profile % 3) * 2;
+    return Team{
+        teamName,
+        {
+            withAge(withRole(withClutch(withTend(batter(hitters[0], P::CenterField, 74 + bat, 58 + bat, 70, 76, 68, 58, BS::Left), 44,54,40,60), 62), PL::Leadoff), 24),
+            withAge(withRole(withTend(batter(hitters[1], P::LeftField, 72 + bat, 64, 68, 68, 62, 58, BS::Left), 52,50,46,54), PL::ContactHitter), 27),
+            withAge(withRole(withTend(batter(hitters[2], P::FirstBase, 68 + bat, 76, 62, 50, 58, 56), 62,46,56,44), PL::CornerIF), 28),
+            withAge(withRole(withClutch(withTend(batter(hitters[3], P::RightField, 68 + bat, 78, 60, 58, 60, 66), 66,44,60,42), 38), PL::PowerHitter), 29),
+            withAge(withRole(withTend(batter(hitters[4], P::ThirdBase, 70 + bat, 68, 64, 60, 62, 62), 58,48,50,52), PL::CornerIF), 31),
+            withAge(withRole(withTend(batter(hitters[5], P::Shortstop, 68 + bat, 56, 66, 70, 76, 74), 48,52,44,56), PL::MiddleIF), 25),
+            withAge(withRole(withTend(batter(hitters[6], P::SecondBase, 68 + bat, 58, 66, 66, 72, 64), 50,50,46,54), PL::MiddleIF), 26),
+            withAge(withRole(withTend(batter(hitters[7], P::Catcher, 64 + bat, 58, 64, 50, 70, 76), 44,52,40,60), PL::Catcher), 32),
+        },
+        {
+            withAge(withRole(withArsenal(pitcher(starters[0], 76 + pit, 70, 76 + pit, 72, PR::Starter), {{PT::Fastball,70},{PT::Slider,68},{PT::Curveball,64},{PT::Changeup,60}}), PL::Ace), 28),
+            withAge(withRole(withArsenal(pitcher(starters[1], 72 + pit, 68, 70 + pit, 68, PR::Starter, TH::Left), {{PT::Fastball,64},{PT::Cutter,64},{PT::Changeup,60},{PT::Slider,56}}), PL::Starter), 27),
+            withAge(withRole(withArsenal(pitcher(starters[2], 70 + pit, 66, 68 + pit, 64, PR::Starter), {{PT::Fastball,62},{PT::Curveball,62},{PT::Changeup,58}}), PL::Starter), 30),
+            withAge(withRole(withArsenal(pitcher(starters[3], 66 + pit, 62, 62 + pit, 60, PR::Starter), {{PT::Fastball,58},{PT::Slider,58},{PT::Changeup,52}}), PL::BackOfRotation), 25),
+            withAge(withRole(withArsenal(pitcher(starters[4], 64 + pit, 60, 60 + pit, 56, PR::Starter), {{PT::Fastball,54},{PT::Curveball,54},{PT::Changeup,50}}), PL::BackOfRotation), 22),
+        },
+        {
+            withAge(withRole(withArsenal(pitcher(relievers[0], 80 + pit, 68, 78 + pit, 44, PR::Closer), {{PT::Fastball,72},{PT::Slider,70},{PT::Cutter,60}}), PL::Closer), 29),
+            withAge(withRole(withArsenal(pitcher(relievers[1], 74 + pit, 64, 72 + pit, 50, PR::Setup), {{PT::Fastball,64},{PT::Slider,62},{PT::Changeup,56}}), PL::Setup), 26),
+            withAge(withRole(withArsenal(pitcher(relievers[2], 72 + pit, 64, 68 + pit, 52, PR::Setup), {{PT::Fastball,62},{PT::Cutter,60},{PT::Curveball,54}}), PL::Setup), 27),
+            withAge(withRole(withArsenal(pitcher(relievers[3], 68 + pit, 62, 64 + pit, 58, PR::MiddleRelief), {{PT::Fastball,58},{PT::Slider,58},{PT::Changeup,52}}), PL::MiddleRelief), 28),
+            withAge(withRole(withArsenal(pitcher(relievers[4], 66 + pit, 62, 62 + pit, 58, PR::MiddleRelief), {{PT::Fastball,56},{PT::Curveball,58},{PT::Changeup,52}}), PL::MiddleRelief), 25),
+            withAge(withRole(withArsenal(pitcher(relievers[5], 64 + pit, 66, 58 + pit, 72, PR::LongRelief), {{PT::Fastball,54},{PT::Changeup,58},{PT::Curveball,54}}), PL::LongRelief), 24),
+            withAge(withRole(withArsenal(pitcher(relievers[6], 66 + pit, 64, 58 + pit, 52, PR::MiddleRelief, TH::Left), {{PT::Fastball,54},{PT::Curveball,60},{PT::Changeup,56}}), PL::Specialist), 31),
+            withAge(withRole(withArsenal(pitcher(relievers[7], 64 + pit, 60, 60 + pit, 62, PR::LongRelief), {{PT::Fastball,54},{PT::Slider,54},{PT::Changeup,50}}), PL::LongRelief), 28),
+        },
+        {
+            withAge(withRole(withTend(batter(bench[0], P::Catcher, 56,48,58,42,62,70), 40,52,42,54), PL::BackupCatcher), 26),
+            withAge(withRole(withTend(batter(bench[1], P::Shortstop, 60,50,58,62,68,66), 46,50,44,52), PL::UtilityIF), 28),
+            withAge(withRole(withTend(batter(bench[2], P::LeftField, 60,52,58,68,62,54, BS::Left), 42,52,42,50), PL::ExtraOF), 25),
+            withAge(withRole(withTend(batter(bench[3], P::FirstBase, 62,64,58,42,50,50), 60,44,56,44), PL::PinchHitter), 35),
+            withAge(withRole(withTend(batter(bench[4], P::RightField, 58,66,52,46,50,52), 66,42,60,40), PL::PinchHitter), 31),
+        },
+        ballpark,
+        League::C
+    };
+}
+
+// ── Georgetown Ravens ─────────────────────────────────────────────────────────
+// 地区最強の戦力を誇る完成度の高い名門。優勝以外は失敗とされる。
+Team georgetownRavens() {
+    return southDivisionTeam("Georgetown Ravens", BallparkConfig::ravensNest(),
+        {"Miles Carter","Theo Brooks","Graham Pierce","Luca Vaughn","Jonah Mercer","Evan Knox","Noah Ellis","Caleb Ward"},
+        {"Silas Grant","Roman Hayes","Dylan Cross","Owen Beck","Felix Monroe"},
+        {"Reid Archer","Nolan Pike","Isaac Lane","Marco Bell","Ezra Tate","Cody Vale","Levi Quinn","Troy Madden"},
+        {"Ari Stone","Mason Reed","Cole West","Dean Porter","Hugo Blair"}, 2);
+}
+
+// ── Capitol Hill Senators ─────────────────────────────────────────────────────
+// 基本に忠実な野球を貫く伝統球団。派手さはないが大崩れしない。
+Team capitolHillSenators() {
+    return southDivisionTeam("Capitol Hill Senators", BallparkConfig::capitolPark(),
+        {"Julian Cole","Andre Wells","Victor Hale","Dominic Price","Simon Clark","Miles Foster","Elliot Marsh","Grant Lowe"},
+        {"Henry Brooks","Adam Knox","Peter Walsh","Colin Fry","Jace Turner"},
+        {"Wes Grant","Damon Field","Oscar Crane","Tyson Reed","Milo Fox","Brady Wynn","Elias Page","Rory Kent"},
+        {"Neil Abbott","Cruz Logan","Drew Moss","Alan Parks","Brett Ames"}, 1);
+}
+
+// ── Anacostia Kings ───────────────────────────────────────────────────────────
+// 爆発力はリーグ屈指。投手力に課題を抱える一方、打線は常に相手へプレッシャーを与える。
+Team anacostiaKings() {
+    return southDivisionTeam("Anacostia Kings", BallparkConfig::kingsYard(),
+        {"Malik Stone","Darius King","Trevon Ross","Kellan Duke","Amir Jordan","Micah Boone","Jalen Price","Omar Fields"},
+        {"Xavier Holt","DeShawn Ray","Tyrell Banks","Quincy Moore","Andre Nash"},
+        {"Kobe Ellis","Rashad Vance","Marcus Penn","Devon Lee","Tariq Ford","Isaiah Bell","Nico West","Dante Lane"},
+        {"Cam Ross","Zion Cole","Jett Blair","Reese Webb","Sol Cruz"}, 3);
+}
+
+// ── Alexandria Cannons ────────────────────────────────────────────────────────
+// 攻守ともに平均的な実力を持つが、突出した武器を欠く。堅実な試合運びが持ち味。
+Team alexandriaCannons() {
+    return southDivisionTeam("Alexandria Cannons", BallparkConfig::cannonField(),
+        {"Wyatt Hayes","Coleman Brooks","Spencer Gray","Garrett Mason","Trent Walsh","Logan Pierce","Bennett Fox","Austin Reed"},
+        {"Carson Blake","Hudson Lane","Parker Mills","Griffin Wade","Ryder Scott"},
+        {"Chase Nolan","Easton Ford","Gavin Clark","Drew Hart","Landon Bell","Finn Porter","Nate Ames","Brody Stone"},
+        {"Shane Moss","Ty Cole","Alden Voss","Reid Page","Owen Cruz"}, 0);
+}
+
+// ── Bethesda Blaze ────────────────────────────────────────────────────────────
+// 再建途中の若いチーム。結果を求めるあまり、まだ安定した戦い方を見つけられていない。
+Team bethesdaBlaze() {
+    return southDivisionTeam("Bethesda Blaze", BallparkConfig::blazeArena(),
+        {"Ethan Shaw","Ryan Cooper","Max Bennett","Blake Turner","Connor Hayes","Luke Griffin","Seth Morgan","Ian Wallace"},
+        {"Asher Knight","Calvin Stone","Jon Beck","Miles Carter","Dane Wells"},
+        {"Rhys Madden","Noel Ford","Clark Evans","Tate Logan","Ellis Brooks","Grant Pike","Leo Walsh","Oren Price"},
+        {"Sam Vance","Alec Lane","Toby Reed","Jude Fox","Kai Porter"}, 1);
+}
+
+// ── Silver Spring Ghosts ──────────────────────────────────────────────────────
+// 派手さはないが、投手力と守備力で接戦をものにする玄人好みの球団。
+Team silverSpringGhosts() {
+    return southDivisionTeam("Silver Spring Ghosts", BallparkConfig::silverSpringStadium(),
+        {"Kai Morgan","Liam Frost","Nate Sterling","Owen Vale","Eli Cruz","Miles Brooks","Tariq Weston","Cal Mason"},
+        {"Gideon Snow","Arlo Crane","Warren Locke","Jasper Hill","Rowan North"},
+        {"Sage Reid","Orion Marsh","Felix Voss","Milo Oiler","Remy Park","Brock Lara","Owen Shaw","Zane Price"},
+        {"Ray Ferris","Lou Blair","Kent Santos","Pete Rooney","Walt Cruz"}, -1);
+}
+
 } // namespace
 
 // ── Public ────────────────────────────────────────────────────────────────────
@@ -757,6 +878,13 @@ std::vector<Team> allTeams() {
         manayunkRunners(),
         fairmountRams(),
         southPhillyStallions(),
+        // South Division — DC/MD/VA
+        georgetownRavens(),
+        capitolHillSenators(),
+        anacostiaKings(),
+        alexandriaCannons(),
+        bethesdaBlaze(),
+        silverSpringGhosts(),
     };
 }
 

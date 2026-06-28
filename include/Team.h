@@ -9,7 +9,7 @@
 
 namespace joji {
 
-enum class League { A, B };
+enum class League { A, B, C };
 
 class Team {
 public:

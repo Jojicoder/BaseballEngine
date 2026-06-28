@@ -1,12 +1,16 @@
 {
   "leagueName": "Joji Baseball League",
   "leagueAbbr": "JBL",
+  "founded": 1948,
+  "motto": "Tradition. Passion. Every Pitch.",
   "season": 2026,
+  "totalTeams": 18,
 
   "divisions": [
     {
       "id": "north",
       "name": "North Division",
+      "location": "New York Metro",
       "teams": [
         "Newark Knights",
         "Queens Titans",
@@ -19,6 +23,7 @@
     {
       "id": "mid",
       "name": "Mid Division",
+      "location": "Philadelphia",
       "teams": [
         "Fishtown Ferals",
         "Kensington Iron",
@@ -31,6 +36,7 @@
     {
       "id": "south",
       "name": "South Division",
+      "location": "DC / Maryland / Virginia",
       "teams": [
         "Georgetown Ravens",
         "Capitol Hill Senators",
@@ -65,11 +71,27 @@
 
   "schedule": {
     "gamesPerSeason": 162,
-    "divisionGames": 90,
-    "seriesVsDivisionOpponent": 18,
-    "interDivisionGames": 72,
-    "seriesVsInterDivisionOpponent": 6,
+    "divisionGames": 80,
+    "seriesVsDivisionOpponent": 16,
+    "interDivisionGames": 82,
+    "interDivisionFormat": {
+      "note": "10球団と7試合、2球団と6試合。6試合相手は毎年ローテーション。",
+      "primarySeries": 7,
+      "primaryOpponents": 10,
+      "shortSeries": 6,
+      "shortOpponents": 2
+    },
     "startingRotationSlots": 5
+  },
+
+  "standings": {
+    "tiebreaker": [
+      "winning_percentage",
+      "head_to_head_record",
+      "run_differential",
+      "total_runs_scored",
+      "coin_flip"
+    ]
   },
 
   "playoffs": {
@@ -78,43 +100,119 @@
       "divisionChamps": 3,
       "wildCards": 3
     },
-    "seeding": "divisionChamp1 > divisionChamp2 > divisionChamp3 > WC1 > WC2 > WC3 by record",
+    "seeding": {
+      "note": "地区優勝3チームを勝率順に#1〜#3とする。残り15球団から勝率上位3チームが#4〜#6（ワイルドカード）。同率は standings.tiebreaker の順で決定。",
+      "seeds1to3": "division champions ordered by winning percentage",
+      "seeds4to6": "wild card teams ordered by winning percentage"
+    },
     "rounds": [
       {
-        "name": "ワイルドカードラウンド",
-        "matchups": ["#4 vs #5", "#3 vs #6"],
+        "name": "Wild Card",
+        "matchups": ["#3 vs #6", "#4 vs #5"],
         "format": "best-of-3",
-        "higherSeedHosts": true
+        "winsRequired": 2,
+        "homeFormat": "all games at higher seed",
+        "note": "全試合を上位シードの本拠地で開催。"
       },
       {
-        "name": "準決勝",
-        "matchups": ["#1 vs WC winner", "#2 vs WC winner"],
+        "name": "Division Series",
+        "matchups": [
+          "#1 vs lowest remaining seed",
+          "#2 vs other Wild Card winner"
+        ],
         "format": "best-of-5",
-        "higherSeedHosts": true
+        "winsRequired": 3,
+        "homeFormat": "2-2-1",
+        "homeGameBreakdown": {
+          "game1": "higher seed",
+          "game2": "higher seed",
+          "game3": "lower seed",
+          "game4": "lower seed",
+          "game5": "higher seed"
+        },
+        "note": "#1は勝ち残った中で最もシード順位が低いWild Card勝者と対戦する。"
       },
       {
-        "name": "JBL日本シリーズ",
-        "matchups": ["semifinal winner vs semifinal winner"],
+        "name": "JBL Championship",
+        "matchups": ["Division Series winner vs Division Series winner"],
         "format": "best-of-7",
-        "higherSeedHosts": true
+        "winsRequired": 4,
+        "homeFormat": "2-3-2",
+        "homeGameBreakdown": {
+          "game1": "higher seed",
+          "game2": "higher seed",
+          "game3": "lower seed",
+          "game4": "lower seed",
+          "game5": "lower seed",
+          "game6": "higher seed",
+          "game7": "higher seed"
+        },
+        "note": "勝者がその年のJBL Championとなる。"
       }
     ]
   },
 
+  "allStar": {
+    "timing": "毎年7月",
+    "format": "North Division vs Mid + South Division"
+  },
+
+  "draft": {
+    "timing": "毎年11月",
+    "rounds": 8,
+    "system": "完全ウェーバー方式",
+    "order": "前年レギュラーシーズン順位の逆順"
+  },
+
+  "freeAgency": {
+    "eligibility": "一軍登録年数6年以上",
+    "opens": "シーズン終了後"
+  },
+
+  "tradeDeadline": {
+    "date": "7月末",
+    "note": "期限以降は翌シーズンまでトレード不可。"
+  },
+
+  "awards": [
+    { "name": "Most Valuable Player",      "abbr": "MVP",  "scope": "position_players_and_pitchers" },
+    { "name": "Rookie of the Year",        "abbr": "ROY",  "scope": "all" },
+    { "name": "Starting Pitcher of the Year",              "scope": "starting_pitchers" },
+    { "name": "Reliever of the Year",                      "scope": "relief_pitchers" },
+    { "name": "Manager of the Year",                       "scope": "managers" },
+    { "name": "Gold Glove Award",                          "scope": "per_position" },
+    { "name": "Silver Slugger Award",                      "scope": "per_position" },
+    { "name": "Batting Champion",                          "scope": "position_players", "stat": "AVG" },
+    { "name": "Home Run Champion",                         "scope": "position_players", "stat": "HR" },
+    { "name": "RBI Champion",                              "scope": "position_players", "stat": "RBI" },
+    { "name": "Stolen Base Champion",                      "scope": "position_players", "stat": "SB" },
+    { "name": "ERA Champion",                              "scope": "starting_pitchers", "stat": "ERA" },
+    { "name": "Strikeout Champion",                        "scope": "pitchers",          "stat": "K" },
+    { "name": "Saves Champion",                            "scope": "relief_pitchers",   "stat": "SV" },
+    { "name": "Comeback Player of the Year",               "scope": "all" }
+  ],
+
+  "hallOfFame": {
+    "eligibility": "引退後5年以上"
+  },
+
   "calendar": [
-    { "name": "キャンプ",               "start": "2026-02-01", "end": "2026-03-05", "notes": "春季キャンプ" },
-    { "name": "オープン戦",             "start": "2026-03-10", "end": "2026-03-27", "notes": "オープン戦 (無印)" },
-    { "name": "開幕",                   "start": "2026-04-03", "end": null,          "notes": "Opening Day" },
-    { "name": "前半戦",                 "start": "2026-04-03", "end": "2026-07-10", "notes": "前半戦レギュラーシーズン" },
-    { "name": "前半戦終了",             "start": "2026-07-10", "end": null,          "notes": "前半戦最終日" },
-    { "name": "オールスター",           "start": "2026-07-14", "end": "2026-07-15", "notes": "JBL All-Star Game" },
-    { "name": "後半戦開始",             "start": "2026-07-17", "end": null,          "notes": "後半戦初日" },
-    { "name": "後半戦",                 "start": "2026-07-17", "end": "2026-09-25", "notes": "後半戦レギュラーシーズン" },
-    { "name": "レギュラーシーズン終了", "start": "2026-09-25", "end": null,          "notes": "162試合完了" },
-    { "name": "プレーオフ",             "start": "2026-10-01", "end": "2026-10-20", "notes": "WC→準決勝" },
-    { "name": "JBL日本シリーズ",        "start": "2026-10-22", "end": "2026-10-31", "notes": "チャンピオンシップシリーズ (最大7戦)" },
-    { "name": "ドラフト",               "start": "2026-11-07", "end": null,          "notes": "アマチュアドラフト" },
-    { "name": "FA解禁",                 "start": "2026-11-15", "end": null,          "notes": "フリーエージェント解禁" },
-    { "name": "契約更改",               "start": "2026-11-15", "end": "2026-12-31", "notes": "年俸調停・契約更改期間" }
+    { "name": "Spring Camp",              "start": "2026-02-01", "end": "2026-03-05", "notes": "春季キャンプ" },
+    { "name": "Preseason",               "start": "2026-03-10", "end": "2026-03-27", "notes": "オープン戦" },
+    { "name": "Opening Day",             "start": "2026-04-03", "end": null,          "notes": "開幕" },
+    { "name": "First Half",              "start": "2026-04-03", "end": "2026-07-10", "notes": "前半戦レギュラーシーズン" },
+    { "name": "All-Star Week",           "start": "2026-07-14", "end": "2026-07-15", "notes": "JBL All-Star Game" },
+    { "name": "Second Half",             "start": "2026-07-17", "end": "2026-09-25", "notes": "後半戦レギュラーシーズン" },
+    { "name": "Trade Deadline",          "start": "2026-07-31", "end": null,          "notes": "トレード期限" },
+    { "name": "Pennant Race",            "start": "2026-09-01", "end": "2026-09-25", "notes": "9月ペナントレース" },
+    { "name": "Regular Season End",      "start": "2026-09-25", "end": null,          "notes": "162試合完了" },
+    { "name": "Wild Card",               "start": "2026-10-01", "end": "2026-10-04", "notes": "ワイルドカード（最大3戦）" },
+    { "name": "Division Series",         "start": "2026-10-07", "end": "2026-10-16", "notes": "ディビジョンシリーズ（最大5戦）" },
+    { "name": "JBL Championship",        "start": "2026-10-20", "end": "2026-10-31", "notes": "JBLチャンピオンシップ（最大7戦）" },
+    { "name": "Awards",                  "start": "2026-11-03", "end": null,          "notes": "各種表彰発表" },
+    { "name": "Draft",                   "start": "2026-11-07", "end": null,          "notes": "アマチュアドラフト（8ラウンド）" },
+    { "name": "Free Agency",             "start": "2026-11-15", "end": null,          "notes": "FA解禁" },
+    { "name": "Contract Negotiations",   "start": "2026-11-15", "end": "2026-12-31", "notes": "年俸調停・契約更改期間" },
+    { "name": "Hall of Fame",            "start": "2026-12-15", "end": null,          "notes": "殿堂入り発表" }
   ]
 }
