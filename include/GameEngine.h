@@ -64,6 +64,13 @@ public:
     // Fast mode: double physics timestep + skip trajectory recording (season sim only)
     void setFastMode(bool fast) { fastMode_ = fast; }
 
+    // Applies any half-inning transition left pending by the previous play
+    // (3 outs reached, or a walk-off) so that state() reflects the inning
+    // the *next* play will actually happen in. simulateNextPlay() calls this
+    // itself, but callers that snapshot state() for logging/export purposes
+    // before calling simulateNextPlay() should call this first — otherwise
+    // that snapshot is one half-inning stale for the play it's labeling.
+    void settleHalfInningIfNeeded();
     std::optional<PlayResult> simulateNextPlay(std::ostream* out = nullptr);
     bool isComplete() const;
     GameResult result() const;

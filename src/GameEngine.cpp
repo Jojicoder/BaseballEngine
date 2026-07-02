@@ -1919,25 +1919,41 @@ const std::vector<BaseRunningEvent>& GameEngine::latestBaseRunningEvents() const
     return latestBaseRunningEvents_;
 }
 
-std::optional<PlayResult> GameEngine::simulateNextPlay(std::ostream* out) {
+void GameEngine::settleHalfInningIfNeeded() {
     if (!shouldContinue()) {
+        // A walk-off can make shouldContinue() false mid-half-inning, before
+        // outs reach 3 — flush whatever runs are pending so the line score
+        // reflects the winning half-inning instead of dropping it entirely.
+        commitHalfInning();
         finalizeGameStats();
-        return std::nullopt;
+        return;
     }
 
     if (state_.outs >= 3 || isWalkOffState()) {
         if (!state_.isTop && isBottomHalfOver()) {
             commitHalfInning();
             finalizeGameStats();
-            return std::nullopt;
+            return;
         }
         commitHalfInning();
         nextHalfInning();
         initHalfInning();
         if (!shouldContinue()) {
             finalizeGameStats();
-            return std::nullopt;
         }
+    }
+}
+
+std::optional<PlayResult> GameEngine::simulateNextPlay(std::ostream* out) {
+    settleHalfInningIfNeeded();
+    if (!shouldContinue()) {
+        finalizeGameStats();
+        return std::nullopt;
+    }
+    if (state_.outs >= 3 || isWalkOffState()) {
+        // settleHalfInningIfNeeded() already committed this — if we're
+        // still sitting on 3+ outs, the game ended (bottom half over).
+        return std::nullopt;
     }
 
     considerPitcherChange();
@@ -2051,15 +2067,19 @@ void GameEngine::initHalfInning() {
 }
 
 void GameEngine::commitHalfInning() {
+    // Idempotent: a walk-off ends the game mid-half-inning, before the
+    // usual outs>=3 transition runs, so callers may need to force a commit
+    // of whatever's pending. Guard against re-committing (and stomping a
+    // real value back to 0) if this half-inning's slot is already filled.
     const int idx = state_.inning - 1;
-    if (state_.isTop) {
-        awayLineScore_.resize(static_cast<std::size_t>(idx + 1), -1);
-        awayLineScore_[static_cast<std::size_t>(idx)] = currentHalfInningRuns_;
-    } else {
-        homeLineScore_.resize(static_cast<std::size_t>(idx + 1), -1);
-        homeLineScore_[static_cast<std::size_t>(idx)] = currentHalfInningRuns_;
+    auto& lineScore = state_.isTop ? awayLineScore_ : homeLineScore_;
+    if (idx >= static_cast<int>(lineScore.size())) {
+        lineScore.resize(static_cast<std::size_t>(idx + 1), -1);
     }
-    currentHalfInningRuns_ = 0;
+    if (lineScore[static_cast<std::size_t>(idx)] < 0) {
+        lineScore[static_cast<std::size_t>(idx)] = currentHalfInningRuns_;
+        currentHalfInningRuns_ = 0;
+    }
 }
 
 void GameEngine::simulateHalfInning(std::ostream& out) {
@@ -2341,13 +2361,22 @@ PlayResult GameEngine::applyPlay(const PlayResult& rawResult) {
             battingBoxScore().atBats += 1;
             if (batter) { batter->atBats++; }
 
-            // フィルダースチョイス: 1塁のみに走者、2アウト未満、ダブルプレー不成立
+            // フィルダースチョイス: 1塁に走者、2アウト未満、ダブルプレー不成立
+            // (2塁/3塁走者がいても成立しうる — 送球後の連鎖は下で処理する)
             const bool fcEligible =
                 !dpEligible && !tpEligible
                 && state_.bases[0].has_value()
-                && !state_.bases[1].has_value()
                 && state_.outs < 2
                 && random_.chance(0.20);
+
+            // MLB Rule 5.08(a): if the inning's third out is recorded on a
+            // force play (any force — batter at 1st included), a run that
+            // crossed the plate on that same play does NOT count, no matter
+            // when the runner touched home relative to the throw.
+            const int outsBeforePlay = state_.outs;
+            auto isInningEndingForce = [&](int outsThisPlay) {
+                return outsBeforePlay + outsThisPlay >= 3;
+            };
 
             if (tpEligible) {
                 const std::string runnerFromSecond = *state_.bases[1];
@@ -2365,6 +2394,9 @@ PlayResult GameEngine::applyPlay(const PlayResult& rawResult) {
                 if (batter) { batter->gidp++; }
                 battingBoxScore().runnerOutsOnBases += 2;
                 result.events.push_back("Ground ball — triple play. Three outs recorded.");
+                // Triple play always ends the inning (3 outs via forces), so
+                // per 5.08(a) any runner still on 3rd never scores. Nothing
+                // further to do — the half-inning is over.
             } else if (dpEligible) {
                 const std::string runnerFromFirst = *state_.bases[0];
                 state_.bases[0].reset();
@@ -2378,6 +2410,27 @@ PlayResult GameEngine::applyPlay(const PlayResult& rawResult) {
                 if (batter) { batter->gidp++; }
                 battingBoxScore().runnerOutsOnBases += 1;
                 result.events.push_back("Ground ball — double play. Two outs recorded.");
+
+                // Cascade: forcing the 1st-base runner to 2nd also forces
+                // anyone ahead of them in an unbroken chain back to 1st.
+                // No RBI is ever credited on a GIDP, run or no run.
+                if (state_.bases[1].has_value()) {
+                    const std::string runnerFromSecond = *state_.bases[1];
+                    state_.bases[1].reset();
+                    if (state_.bases[2].has_value()) {
+                        const std::string runnerFromThird = *state_.bases[2];
+                        state_.bases[2].reset();
+                        if (isInningEndingForce(result.outsRecorded)) {
+                            result.events.push_back(
+                                runnerFromThird + " is stranded — the double play ends the inning.");
+                        } else {
+                            scoreRunner(result, runnerFromThird);
+                            result.events.push_back(runnerFromThird + " scores, forced home on the double play.");
+                        }
+                    }
+                    state_.bases[2] = runnerFromSecond;
+                    result.events.push_back(runnerFromSecond + " forced to third.");
+                }
             } else if (fcEligible) {
                 // フィルダースチョイス: 守備が2塁へ送球 → 打者が1塁へ
                 const std::string runner1B = *state_.bases[0];
@@ -2391,6 +2444,27 @@ PlayResult GameEngine::applyPlay(const PlayResult& rawResult) {
                 result.defensiveDecision.reason = "take force at 2B";
                 result.type = AtBatResultType::FielderChoice;
                 result.events.push_back("Fielder's choice. " + runner1B + " out at second.");
+
+                // Same force cascade as above: the runner put out at 2nd was
+                // also forcing anyone ahead of them to move up.
+                if (state_.bases[1].has_value()) {
+                    const std::string runnerFromSecond = *state_.bases[1];
+                    state_.bases[1].reset();
+                    if (state_.bases[2].has_value()) {
+                        const std::string runnerFromThird = *state_.bases[2];
+                        state_.bases[2].reset();
+                        if (isInningEndingForce(result.outsRecorded)) {
+                            result.events.push_back(
+                                runnerFromThird + " is stranded — the force at second ends the inning.");
+                        } else {
+                            scoreRunner(result, runnerFromThird);
+                            if (batter) { batter->rbi += 1; }
+                            result.events.push_back(runnerFromThird + " scores, forced home.");
+                        }
+                    }
+                    state_.bases[2] = runnerFromSecond;
+                    result.events.push_back(runnerFromSecond + " forced to third.");
+                }
             } else {
                 result.outsRecorded = 1;
                 result.runnerOuts.push_back({result.batterName, 0, 1, true});
@@ -2399,6 +2473,49 @@ PlayResult GameEngine::applyPlay(const PlayResult& rawResult) {
                 result.defensiveDecision.holdBall = false;
                 result.defensiveDecision.reason = "routine out at 1B";
                 result.events.push_back("The defense turns it into an out.");
+
+                // The defense didn't attempt anyone else, but a runner
+                // forced off 1st (because the batter is taking it) still
+                // has to advance — the whole chain moves up automatically.
+                if (state_.bases[0].has_value()) {
+                    const std::string runnerFromFirst = *state_.bases[0];
+                    state_.bases[0].reset();
+                    if (state_.bases[1].has_value()) {
+                        const std::string runnerFromSecond = *state_.bases[1];
+                        state_.bases[1].reset();
+                        if (state_.bases[2].has_value()) {
+                            const std::string runnerFromThird = *state_.bases[2];
+                            state_.bases[2].reset();
+                            if (isInningEndingForce(result.outsRecorded)) {
+                                result.events.push_back(
+                                    runnerFromThird + " is stranded — the force at first is the third out.");
+                            } else {
+                                scoreRunner(result, runnerFromThird);
+                                if (batter) { batter->rbi += 1; }
+                                result.events.push_back(runnerFromThird + " scores from third, forced home.");
+                            }
+                        }
+                        state_.bases[2] = runnerFromSecond;
+                        result.events.push_back(runnerFromSecond + " forced to third.");
+                    }
+                    state_.bases[1] = runnerFromFirst;
+                    result.events.push_back(runnerFromFirst + " forced to second.");
+                } else if (state_.bases[2].has_value()) {
+                    // 1st is empty, so 3rd isn't forced — the runner may
+                    // still try to score on a well-placed groundout, at
+                    // their own risk, unless this out ends the inning.
+                    const std::string runnerFromThird = *state_.bases[2];
+                    const double scoreChance = std::clamp(
+                        0.42 + (result.battedBall.estimatedDistance - 120.0) * 0.0015, 0.15, 0.75);
+                    if (!isInningEndingForce(result.outsRecorded) && random_.chance(scoreChance)) {
+                        state_.bases[2].reset();
+                        scoreRunner(result, runnerFromThird);
+                        if (batter) { batter->rbi += 1; }
+                        result.events.push_back(runnerFromThird + " scores from third on the groundout.");
+                    } else {
+                        result.events.push_back(runnerFromThird + " holds at third.");
+                    }
+                }
             }
             break;
         }

@@ -441,6 +441,13 @@ GameExport simulateGame(const std::vector<joji::Team>& baseTeams,
     bool prevTop = true;
 
     while (!engine.isComplete()) {
+        // Settle any half-inning transition left pending by the previous
+        // play *before* snapshotting state — otherwise this snapshot (used
+        // to label the play about to be simulated) is one half-inning
+        // stale, mislabeling the first play of each new half-inning under
+        // the previous inning/side and misattributing its score.
+        engine.settleHalfInningIfNeeded();
+        if (engine.isComplete()) break;
         const joji::GameState before = engine.state();
 
         if (before.inning != prevInning || before.isTop != prevTop) {
@@ -579,6 +586,10 @@ GameExport simulateGame(const std::vector<joji::Team>& baseTeams,
         ev << "}";
         pushEvent(ev.str());
     }
+    // A walk-off can end the game before the loop body runs again for that
+    // final half-inning (isComplete() flips true immediately) — flush it so
+    // its runs land in the line score instead of being dropped.
+    engine.settleHalfInningIfNeeded();
 
     const auto gr = engine.result();
     GameExport exported;

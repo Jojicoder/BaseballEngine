@@ -71,7 +71,7 @@ Player pitcher(std::string name, int vel, int ctrl, int stuff, int stamina,
 Team newarkKnights() {
     return Team{
         "Newark Knights",
-        // ── lineup (8人) ─────────────────────────────────────────────────────
+        // ── lineup (9人) ─────────────────────────────────────────────────────
         {
             withAge(withRole(withClutch(withTend(batter("Joji Rivera",  P::CenterField, 78,62,74,82,72,58, BS::Left),  44,56,36,64), 68), PL::Leadoff), 27),
             withAge(withRole(withTend(batter("Marcus Bell",  P::LeftField,   74,68,64,66,70,65),             58,48,52,48), PL::ContactHitter), 30),
@@ -81,6 +81,7 @@ Team newarkKnights() {
             withAge(withRole(withTend(batter("Eli Brooks",   P::Shortstop,   68,54,66,74,80,76),             48,52,44,56), PL::MiddleIF), 25),
             withAge(withRole(withTend(batter("Tariq Mason",  P::SecondBase,  66,58,70,76,74,66),             54,50,46,56), PL::MiddleIF), 26),
             withAge(withRole(withTend(batter("Cal Weston",   P::Catcher,     62,54,64,52,72,80),             42,58,38,60), PL::Catcher), 32),
+            withAge(withRole(withTend(batter("Pete Cruz",   P::LeftField,  72,60,70,46,50,52, BS::Left),   58,50,42,62), PL::PinchHitter), 35),  // DH
         },
         // ── rotation (5人) ───────────────────────────────────────────────────
         {
@@ -140,6 +141,7 @@ Team queensTitans() {
             withAge(withRole(withTend(batter("Isaac Monroe",  P::Shortstop,  64,66,60,60,70,76),             58,48,54,48), PL::MiddleIF), 25),
             withAge(withRole(withTend(batter("Leo Navarro",  P::SecondBase,  62,60,64,72,76,68),             52,50,50,52), PL::MiddleIF), 26),
             withAge(withRole(withTend(batter("Miles Archer", P::Catcher,     68,58,66,54,70,78),             44,56,38,60), PL::Catcher), 32),
+            withAge(withRole(withTend(batter("Tate Hall",   P::FirstBase,  68,66,64,44,52,54),            66,46,60,42), PL::PinchHitter), 34),  // DH
         },
         {
             withAge(withRole(withArsenal(pitcher("Victor Hale", 84,62,82,72, PR::Starter, TH::Left),
@@ -196,6 +198,7 @@ Team brooklynHammers() {
             withAge(withRole(withTend(batter("Felix Mora",   P::Shortstop,   72,60,64,70,74,68),             52,50,48,54), PL::MiddleIF), 25),
             withAge(withRole(withTend(batter("Craig Dunn",   P::SecondBase,  66,62,62,64,70,60),             54,50,50,50), PL::MiddleIF), 26),
             withAge(withRole(withTend(batter("Reggie Walsh", P::Catcher,     66,64,66,50,74,80, BS::Left),   44,56,36,62), PL::Catcher), 32),
+            withAge(withRole(withTend(batter("Chris Webb",  P::FirstBase,  70,68,66,46,54,56, BS::Left),   64,48,58,44), PL::PinchHitter), 35),  // DH
         },
         {
             withAge(withRole(withArsenal(pitcher("Cole Maddox", 82,70,82,76, PR::Starter),
@@ -252,6 +255,7 @@ Team bronxWolves() {
             withAge(withRole(withTend(batter("Marco Silva", P::Shortstop,   70,58,68,76,82,80),             46,52,40,58), PL::MiddleIF), 25),
             withAge(withRole(withTend(batter("Cody Park",   P::SecondBase,  68,62,68,70,76,66),             52,50,48,56), PL::MiddleIF), 27),
             withAge(withRole(withTend(batter("Roy Evans",   P::Catcher,     66,60,66,52,74,82),             44,58,36,62), PL::Catcher), 32),
+            withAge(withRole(withTend(batter("Gus Mora",    P::FirstBase,  72,72,66,46,54,56),             68,46,62,42), PL::PinchHitter), 35),  // DH
         },
         {
             withAge(withRole(withArsenal(pitcher("Max Rivera",   84,70,84,78, PR::Starter),
@@ -308,6 +312,7 @@ Team harlemEagles() {
             withAge(withRole(withTend(batter("Sid Lane",    P::Shortstop,   66,54,64,72,78,76),             48,52,44,56), PL::MiddleIF), 25),
             withAge(withRole(withTend(batter("Tom Cruz",    P::SecondBase,  64,58,66,68,74,66),             52,50,50,52), PL::MiddleIF), 26),
             withAge(withRole(withTend(batter("Ed Nash",     P::Catcher,     62,56,62,50,70,78),             42,56,38,60), PL::Catcher), 32),
+            withAge(withRole(withTend(batter("Gus Webb",    P::FirstBase,  66,64,62,48,54,56),             64,46,58,44), PL::PinchHitter), 35),  // DH
         },
         {
             withAge(withRole(withArsenal(pitcher("Roy Holt",     84,68,82,74, PR::Starter),
@@ -364,6 +369,7 @@ Team statenIslandFoxes() {
             withAge(withRole(withTend(batter("Vince Pena",  P::Shortstop,   70,58,68,70,72,70),             48,50,44,56), PL::MiddleIF), 26),
             withAge(withRole(withTend(batter("Dale Ross",   P::SecondBase,  70,60,70,64,68,62),             52,50,50,52), PL::MiddleIF), 25),
             withAge(withRole(withTend(batter("Hank Olson",  P::Catcher,     68,58,66,50,64,72),             42,54,40,58), PL::Catcher), 30),
+            withAge(withRole(withTend(batter("Ike Dunn",    P::FirstBase,  62,60,58,46,50,54),             62,44,58,44), PL::PinchHitter), 33),  // DH
         },
         {
             withAge(withRole(withArsenal(pitcher("Ben Mack",     80,66,76,72, PR::Starter),
@@ -420,6 +426,7 @@ Team fishtownFerals() {
             withAge(withRole(withTend(batter("Luis Diaz",  P::Shortstop,   72,60,68,76,80,78),             50,50,42,60), PL::MiddleIF), 25),
             withAge(withRole(withTend(batter("Brad Cole",  P::SecondBase,  68,62,66,68,74,64),             52,50,48,54), PL::MiddleIF), 26),
             withAge(withRole(withTend(batter("Pete Vega",  P::Catcher,     66,64,68,50,74,82, BS::Left),   42,58,36,64), PL::Catcher), 32),
+            withAge(withRole(withTend(batter("Wade Cruz",  P::FirstBase,  72,68,66,46,54,56, BS::Left),   64,48,58,44), PL::PinchHitter), 35),  // DH
         },
         {
             withAge(withRole(withArsenal(pitcher("Jake Ford",  84,70,84,76, PR::Starter),
@@ -477,6 +484,7 @@ Team kensingtonIron() {
             withAge(withRole(withTend(batter("Deon Ruiz",  P::Shortstop,   70,58,68,74,80,78),              48,52,42,58), PL::MiddleIF), 25),
             withAge(withRole(withTend(batter("Cody Lane",  P::SecondBase,  68,60,66,70,76,66),              52,50,46,56), PL::MiddleIF), 26),
             withAge(withRole(withTend(batter("Frank Obi",  P::Catcher,     64,60,64,50,72,80),              44,58,38,62), PL::Catcher), 32),
+            withAge(withRole(withTend(batter("Leo Webb",   P::FirstBase,  68,68,64,44,52,54, BS::Left),   64,46,56,44), PL::PinchHitter), 35),  // DH
         },
         {
             withAge(withRole(withArsenal(pitcher("Nate Cross", 82,70,82,76, PR::Starter),
@@ -534,6 +542,7 @@ Team germantownColonials() {
             withAge(withRole(withTend(batter("Nels Diaz",  P::Shortstop,   70,58,66,72,78,76),             48,52,42,58), PL::MiddleIF), 25),
             withAge(withRole(withTend(batter("Bert Lane",  P::SecondBase,  68,60,64,68,74,64),             50,50,46,54), PL::MiddleIF), 26),
             withAge(withRole(withTend(batter("Wes Obi",    P::Catcher,     64,62,62,52,72,78),             44,56,38,60), PL::Catcher), 32),
+            withAge(withRole(withTend(batter("Dan Webb",   P::FirstBase,  66,66,62,42,50,52, BS::Left),   62,46,56,42), PL::PinchHitter), 35),  // DH
         },
         {
             withAge(withRole(withArsenal(pitcher("Phil Nash",  78,70,78,74, PR::Starter),
@@ -591,6 +600,7 @@ Team manayunkRunners() {
             withAge(withRole(withTend(batter("Drew Lane",  P::ThirdBase,   68,64,62,68,68,64),             56,50,50,52), PL::CornerIF), 31),
             withAge(withRole(withTend(batter("Cole Mays",  P::SecondBase,  68,56,64,74,76,68),             50,52,44,58), PL::MiddleIF), 25),
             withAge(withRole(withTend(batter("Kurt Obi",   P::Catcher,     62,58,62,52,70,76),             44,56,40,58), PL::Catcher), 32),
+            withAge(withRole(withTend(batter("Lon Webb",   P::FirstBase,  66,66,62,46,50,52, BS::Left),   62,46,56,42), PL::PinchHitter), 35),  // DH
         },
         {
             withAge(withRole(withArsenal(pitcher("Mel Ross",  78,70,76,74, PR::Starter),
@@ -648,6 +658,7 @@ Team fairmountRams() {
             withAge(withRole(withTend(batter("Zeke Diaz",  P::Shortstop,   72,60,66,68,76,74),             48,52,44,56), PL::MiddleIF), 25),
             withAge(withRole(withTend(batter("Boyd Lane",  P::SecondBase,  70,60,64,64,72,62),             50,50,46,52), PL::MiddleIF), 26),
             withAge(withRole(withTend(batter("Ivan Obi",   P::Catcher,     68,62,64,52,70,76),             44,54,40,58), PL::Catcher), 32),
+            withAge(withRole(withTend(batter("Lon Webb",   P::FirstBase,  62,62,58,42,48,50),             62,44,58,42), PL::PinchHitter), 35),  // DH
         },
         {
             withAge(withRole(withArsenal(pitcher("Hank Vann", 76,68,76,72, PR::Starter),
@@ -705,6 +716,7 @@ Team southPhillyStallions() {
             withAge(withRole(withTend(batter("Remy Diaz",  P::Shortstop,   74,58,70,66,72,70),             48,50,44,56), PL::MiddleIF), 25),
             withAge(withRole(withTend(batter("Otis Lane",  P::SecondBase,  74,60,68,64,68,60),             50,50,46,54), PL::MiddleIF), 26),
             withAge(withRole(withTend(batter("Vern Obi",   P::Catcher,     72,62,68,50,66,74),             44,52,40,60), PL::Catcher), 32),
+            withAge(withRole(withTend(batter("Roy Webb",   P::FirstBase,  64,62,60,40,46,48),             60,44,54,44), PL::PinchHitter), 35),  // DH
         },
         {
             withAge(withRole(withArsenal(pitcher("Buck Nash",  74,66,72,68, PR::Starter),
@@ -768,6 +780,7 @@ Team southDivisionTeam(const std::string& teamName,
             withAge(withRole(withTend(batter(hitters[5], P::Shortstop, 68 + bat, 56, 66, 70, 76, 74), 48,52,44,56), PL::MiddleIF), 25),
             withAge(withRole(withTend(batter(hitters[6], P::SecondBase, 68 + bat, 58, 66, 66, 72, 64), 50,50,46,54), PL::MiddleIF), 26),
             withAge(withRole(withTend(batter(hitters[7], P::Catcher, 64 + bat, 58, 64, 50, 70, 76), 44,52,40,60), PL::Catcher), 32),
+            withAge(withRole(withTend(batter(bench[3], P::FirstBase, 62,64,58,42,50,50), 60,44,56,44), PL::PinchHitter), 35),  // DH
         },
         {
             withAge(withRole(withArsenal(pitcher(starters[0], 76 + pit, 70, 76 + pit, 72, PR::Starter), {{PT::Fastball,70},{PT::Slider,68},{PT::Curveball,64},{PT::Changeup,60}}), PL::Ace), 28),
