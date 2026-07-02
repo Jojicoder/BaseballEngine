@@ -3,6 +3,12 @@
 // Usage:
 //   ./JojiGameExport [seed]
 //   ./JojiGameExport --season 2026 --all-games --out-dir public/jbl/seasons/2026 [--limit N]
+//   ./JojiGameExport --season 2026 --incremental --out-dir public/jbl/seasons/2026 [--through YYYY-MM-DD]
+//
+// --incremental exports only games not already recorded in
+// <out-dir>/schedule-log.tsv, up through --through (defaults to today), and
+// merges them into season.json/games/index.json without re-simulating games
+// that were exported on a previous run.
 
 #include "BallPhysicsEngine.h"
 #include "GameEngine.h"
@@ -34,9 +40,11 @@ constexpr int kSeasonRounds = 162;
 struct CliOptions {
     bool seasonMode = false;
     bool allGames = false;
+    bool incremental = false;
     int season = 2026;
     int limit = 0;
     std::string outDir;
+    std::string through;
     std::optional<uint32_t> seed;
 };
 
@@ -636,9 +644,11 @@ GameExport simulateGame(const std::vector<joji::Team>& baseTeams,
     return exported;
 }
 
-std::vector<GameExport> generateSeason(const std::vector<joji::Team>& teams,
-                                       int season,
-                                       int limit) {
+// Builds the full season's game order (matchups + day index) deterministically
+// from `season` alone. Cheap: no simulation happens here, so incremental export
+// can call this every run just to know "what game N is" without re-playing games
+// that were already exported on a previous day.
+std::vector<PendingGame> buildSchedule(const std::vector<joji::Team>& teams, int season) {
     const int teamCount = static_cast<int>(teams.size());
     std::vector<int> allTeamIndices;
     allTeamIndices.reserve(teams.size());
@@ -694,29 +704,119 @@ std::vector<GameExport> generateSeason(const std::vector<joji::Team>& teams,
         }
     }
 
-    std::vector<GameExport> games;
+    return scheduled;
+}
+
+// Replays (cheaply, no simulation) the starter-rotation counters for every
+// scheduled game before `uptoIndex`, so a later call to simulateRange() can
+// resume mid-season without re-simulating already-exported games.
+std::vector<int> fastForwardTeamGames(const std::vector<joji::Team>& teams,
+                                      const std::vector<PendingGame>& scheduled,
+                                      int uptoIndex) {
     std::vector<int> teamGames(teams.size(), 0);
-    int gameNumber = 0;
+    const int limit = std::min(uptoIndex, static_cast<int>(scheduled.size()));
+    for (int i = 0; i < limit; ++i) {
+        const auto& sg = scheduled[static_cast<std::size_t>(i)];
+        teamGames[static_cast<std::size_t>(sg.awayIdx)]++;
+        teamGames[static_cast<std::size_t>(sg.homeIdx)]++;
+    }
+    return teamGames;
+}
 
-    for (const auto& scheduledGame : scheduled) {
-        if (limit > 0 && static_cast<int>(games.size()) >= limit) return games;
+// Simulates (the expensive part) only scheduled games in [fromIndex, toIndex).
+// gameId/seed are derived from the absolute schedule position (i + 1), so the
+// same game index always produces the same game regardless of whether it was
+// exported via --all-games or one day at a time via --incremental.
+std::vector<GameExport> simulateRange(const std::vector<joji::Team>& teams,
+                                      int season,
+                                      const std::vector<PendingGame>& scheduled,
+                                      int fromIndex,
+                                      int toIndex) {
+    std::vector<int> teamGames = fastForwardTeamGames(teams, scheduled, fromIndex);
+    std::vector<GameExport> games;
+    const int limit = std::min(toIndex, static_cast<int>(scheduled.size()));
 
-        const int awaySlot = teamGames[static_cast<std::size_t>(scheduledGame.awayIdx)] % 5;
-        const int homeSlot = teamGames[static_cast<std::size_t>(scheduledGame.homeIdx)] % 5;
-        teamGames[static_cast<std::size_t>(scheduledGame.awayIdx)]++;
-        teamGames[static_cast<std::size_t>(scheduledGame.homeIdx)]++;
+    for (int i = std::max(0, fromIndex); i < limit; ++i) {
+        const auto& sg = scheduled[static_cast<std::size_t>(i)];
+        const int awaySlot = teamGames[static_cast<std::size_t>(sg.awayIdx)] % 5;
+        const int homeSlot = teamGames[static_cast<std::size_t>(sg.homeIdx)] % 5;
+        teamGames[static_cast<std::size_t>(sg.awayIdx)]++;
+        teamGames[static_cast<std::size_t>(sg.homeIdx)]++;
 
-        ++gameNumber;
+        const int gameNumber = i + 1;
         const std::string gameNumberText = std::to_string(gameNumber);
         const std::string gameId = std::to_string(season) + "-" +
             (gameNumber < 1000 ? std::string(3 - gameNumberText.size(), '0') : "") +
             gameNumberText;
         const uint32_t seed = static_cast<uint32_t>(season * 100000 + gameNumber);
-        games.push_back(simulateGame(teams, scheduledGame.awayIdx, scheduledGame.homeIdx, season, seed,
-                                     awaySlot, homeSlot, dateForDay(season, scheduledGame.dayIndex), gameId));
+        games.push_back(simulateGame(teams, sg.awayIdx, sg.homeIdx, season, seed,
+                                     awaySlot, homeSlot, dateForDay(season, sg.dayIndex), gameId));
     }
 
     return games;
+}
+
+std::vector<GameExport> generateSeason(const std::vector<joji::Team>& teams,
+                                       int season,
+                                       int limit) {
+    const auto scheduled = buildSchedule(teams, season);
+    const int toIndex = limit > 0
+        ? std::min(limit, static_cast<int>(scheduled.size()))
+        : static_cast<int>(scheduled.size());
+    return simulateRange(teams, season, scheduled, 0, toIndex);
+}
+
+// ── Incremental (one day at a time) export ──────────────────────────────────
+//
+// Full re-simulation of the whole season on every run (--all-games) is
+// wasteful once a season has been running for a while: it replays every
+// already-published game just to reach today's slice, and re-commits
+// unchanged game files every day. schedule-log.tsv is a small, easy-to-parse
+// sidecar (no JSON parser needed) recording the summary of every game already
+// exported, so each incremental run only has to simulate *new* games and can
+// rebuild season.json's standings/schedule from cheap stored data for the rest.
+
+std::string scheduleLogLine(const GameExport& g) {
+    std::ostringstream out;
+    out << g.gameId << '\t' << g.date << '\t' << g.awayIdx << '\t' << g.homeIdx << '\t'
+        << g.away << '\t' << g.home << '\t' << g.venue << '\t' << g.awayScore << '\t'
+        << g.homeScore << '\t' << g.gameFile;
+    return out.str();
+}
+
+std::vector<GameExport> readScheduleLog(const std::filesystem::path& path) {
+    std::vector<GameExport> rows;
+    std::ifstream in(path);
+    if (!in) return rows;
+
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+        std::vector<std::string> cols;
+        std::stringstream ss(line);
+        std::string cell;
+        while (std::getline(ss, cell, '\t')) cols.push_back(cell);
+        if (cols.size() < 10) continue;
+
+        GameExport g;
+        g.gameId = cols[0];
+        g.date = cols[1];
+        g.awayIdx = std::stoi(cols[2]);
+        g.homeIdx = std::stoi(cols[3]);
+        g.away = cols[4];
+        g.home = cols[5];
+        g.venue = cols[6];
+        g.awayScore = std::stoi(cols[7]);
+        g.homeScore = std::stoi(cols[8]);
+        g.gameFile = cols[9];
+        rows.push_back(std::move(g));
+    }
+    return rows;
+}
+
+void appendScheduleLog(const std::filesystem::path& path, const std::vector<GameExport>& games) {
+    std::ofstream out(path, std::ios::app);
+    for (const auto& g : games) out << scheduleLogLine(g) << "\n";
 }
 
 std::string gamesIndexJson(const std::vector<GameExport>& games) {
@@ -826,10 +926,14 @@ CliOptions parseArgs(int argc, char* argv[]) {
             opts.season = std::stoi(argv[++i]);
         } else if (arg == "--all-games") {
             opts.allGames = true;
+        } else if (arg == "--incremental") {
+            opts.incremental = true;
         } else if (arg == "--out-dir" && i + 1 < argc) {
             opts.outDir = argv[++i];
         } else if (arg == "--limit" && i + 1 < argc) {
             opts.limit = std::stoi(argv[++i]);
+        } else if (arg == "--through" && i + 1 < argc) {
+            opts.through = argv[++i];
         } else if (!arg.empty() && arg[0] != '-') {
             opts.seed = static_cast<uint32_t>(std::stoul(arg));
         }
@@ -852,6 +956,59 @@ int main(int argc, char* argv[]) {
     try {
         const CliOptions opts = parseArgs(argc, argv);
         const auto teams = joji::allTeams();
+
+        if (opts.incremental) {
+            if (opts.outDir.empty()) {
+                std::cerr << "Usage: ./JojiGameExport --season YEAR --incremental --out-dir DIR [--through YYYY-MM-DD]\n";
+                return 2;
+            }
+
+            const std::filesystem::path root(opts.outDir);
+            const std::filesystem::path gamesDir = root / "games";
+            const std::filesystem::path scheduleLogPath = root / "schedule-log.tsv";
+            std::filesystem::create_directories(gamesDir);
+
+            std::vector<GameExport> exported = readScheduleLog(scheduleLogPath);
+            const int alreadyExported = static_cast<int>(exported.size());
+
+            const auto scheduled = buildSchedule(teams, opts.season);
+            if (alreadyExported >= static_cast<int>(scheduled.size())) {
+                std::cerr << "Season " << opts.season << " already fully exported ("
+                          << alreadyExported << " games).\n";
+                return 0;
+            }
+
+            const std::string throughDate = opts.through.empty() ? todayDate() : opts.through;
+
+            int toIndex = alreadyExported;
+            while (toIndex < static_cast<int>(scheduled.size()) &&
+                   dateForDay(opts.season, scheduled[static_cast<std::size_t>(toIndex)].dayIndex) <= throughDate) {
+                ++toIndex;
+            }
+
+            if (toIndex == alreadyExported) {
+                std::cerr << "No new JBL games scheduled through " << throughDate << ".\n";
+                return 0;
+            }
+
+            const std::vector<GameExport> newGames =
+                simulateRange(teams, opts.season, scheduled, alreadyExported, toIndex);
+
+            for (const auto& game : newGames) {
+                writeTextFile(root / game.gameFile, game.json);
+            }
+            appendScheduleLog(scheduleLogPath, newGames);
+
+            std::vector<GameExport> combined = exported;
+            combined.insert(combined.end(), newGames.begin(), newGames.end());
+
+            writeTextFile(gamesDir / "index.json", gamesIndexJson(combined));
+            writeTextFile(root / "season.json", seasonJson(teams, combined, opts.season));
+
+            std::cerr << "Wrote " << newGames.size() << " new JBL game(s) through " << throughDate
+                      << " (" << combined.size() << " total).\n";
+            return 0;
+        }
 
         if (opts.seasonMode || opts.allGames) {
             if (!opts.allGames || opts.outDir.empty()) {
