@@ -11,30 +11,53 @@ namespace {
 
 std::string q(const std::string& s) {
     std::string out = "\"";
-    // Iterate as unsigned char — a signed char would make any byte >= 0x80
-    // (UTF-8 continuation bytes) compare negative, which would wrongly
-    // trip the "< 0x20" control-character check below and mangle valid
-    // multi-byte text.
-    for (unsigned char c : s) {
+    const auto* data = reinterpret_cast<const unsigned char*>(s.data());
+    const std::size_t n = s.size();
+    std::size_t i = 0;
+    while (i < n) {
+        const unsigned char c = data[i];
         switch (c) {
-            case '\\': out += "\\\\"; break;
-            case '"': out += "\\\""; break;
-            case '\n': out += "\\n"; break;
-            case '\r': out += "\\r"; break;
-            case '\t': out += "\\t"; break;
-            default:
-                if (c < 0x20) {
-                    // Any other raw control character is still illegal
-                    // inside a JSON string literal and has to be escaped,
-                    // not just the common whitespace ones above.
-                    std::ostringstream esc;
-                    esc << "\\u" << std::hex << std::setw(4) << std::setfill('0')
-                        << static_cast<int>(c);
-                    out += esc.str();
-                } else {
-                    out += static_cast<char>(c);
-                }
-                break;
+            case '\\': out += "\\\\"; ++i; continue;
+            case '"': out += "\\\""; ++i; continue;
+            case '\n': out += "\\n"; ++i; continue;
+            case '\r': out += "\\r"; ++i; continue;
+            case '\t': out += "\\t"; ++i; continue;
+            default: break;
+        }
+        if (c < 0x20) {
+            // Any other raw control character is still illegal inside a
+            // JSON string literal and has to be escaped, not just the
+            // common whitespace ones above.
+            std::ostringstream esc;
+            esc << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(c);
+            out += esc.str();
+            ++i;
+            continue;
+        }
+        if (c < 0x80) {
+            out += static_cast<char>(c);
+            ++i;
+            continue;
+        }
+        // Multi-byte UTF-8 lead byte. Occasionally a string field ends up
+        // holding stray/uninitialized bytes (a memory bug elsewhere in the
+        // engine, not something this function can fix) that don't form
+        // valid UTF-8 — emitting them verbatim produces JSON no parser can
+        // read back. Validate the sequence and drop anything malformed
+        // instead of writing it through.
+        int len = 0;
+        if ((c & 0xE0) == 0xC0) len = 2;
+        else if ((c & 0xF0) == 0xE0) len = 3;
+        else if ((c & 0xF8) == 0xF0) len = 4;
+        bool ok = len > 0 && i + static_cast<std::size_t>(len) <= n;
+        for (int k = 1; ok && k < len; ++k) {
+            ok = (data[i + static_cast<std::size_t>(k)] & 0xC0) == 0x80;
+        }
+        if (ok) {
+            out.append(reinterpret_cast<const char*>(data + i), static_cast<std::size_t>(len));
+            i += static_cast<std::size_t>(len);
+        } else {
+            ++i; // drop the single invalid byte and keep scanning
         }
     }
     out += "\"";
