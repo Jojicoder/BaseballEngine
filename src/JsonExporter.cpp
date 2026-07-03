@@ -11,14 +11,30 @@ namespace {
 
 std::string q(const std::string& s) {
     std::string out = "\"";
-    for (char c : s) {
+    // Iterate as unsigned char — a signed char would make any byte >= 0x80
+    // (UTF-8 continuation bytes) compare negative, which would wrongly
+    // trip the "< 0x20" control-character check below and mangle valid
+    // multi-byte text.
+    for (unsigned char c : s) {
         switch (c) {
             case '\\': out += "\\\\"; break;
             case '"': out += "\\\""; break;
             case '\n': out += "\\n"; break;
             case '\r': out += "\\r"; break;
             case '\t': out += "\\t"; break;
-            default: out += c; break;
+            default:
+                if (c < 0x20) {
+                    // Any other raw control character is still illegal
+                    // inside a JSON string literal and has to be escaped,
+                    // not just the common whitespace ones above.
+                    std::ostringstream esc;
+                    esc << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+                        << static_cast<int>(c);
+                    out += esc.str();
+                } else {
+                    out += static_cast<char>(c);
+                }
+                break;
         }
     }
     out += "\"";
