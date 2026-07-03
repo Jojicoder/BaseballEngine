@@ -463,8 +463,30 @@ GameExport simulateGame(const std::vector<joji::Team>& baseTeams,
             prevTop = before.isTop;
         }
 
+        // Pitching changes happen inside simulateNextPlay(), before the at-bat
+        // it simulates — diff the active pitcher around the call to surface
+        // them as an event, since the engine doesn't emit one on its own.
+        const std::string pitcherBefore = engine.currentPitcher().name;
+
         auto result = engine.simulateNextPlay();
         if (!result) continue;
+
+        const std::string pitcherAfter = engine.currentPitcher().name;
+        if (pitcherAfter != pitcherBefore) {
+            const std::string pitchingTeam = before.isTop ? homeTeam.name() : awayTeam.name();
+            std::ostringstream ev;
+            ev << "{\"type\":\"substitution\""
+               << ",\"inning\":" << before.inning
+               << ",\"half\":" << joji::jsonString(halfName(before.isTop))
+               << ",\"isTop\":" << (before.isTop ? "true" : "false")
+               << ",\"team\":" << joji::jsonString(pitchingTeam)
+               << ",\"subType\":\"pitching\""
+               << ",\"playerOut\":" << joji::jsonString(pitcherBefore)
+               << ",\"playerIn\":" << joji::jsonString(pitcherAfter)
+               << ",\"score\":" << scoreJson(before)
+               << "}";
+            pushEvent(ev.str());
+        }
 
         const joji::GameState after = engine.state();
         const auto* ab = engine.lastAtBat() ? &engine.lastAtBat().value() : nullptr;
