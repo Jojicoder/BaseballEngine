@@ -372,6 +372,7 @@ std::string pitchersJson(const std::vector<joji::PitcherBoxScore>& stats,
             << ",\"team\":" << joji::jsonString(teamName)
             << ",\"jerseyNumber\":" << p.jerseyNumber
             << ",\"gamesStarted\":" << p.gamesStarted
+            << ",\"role\":" << joji::jsonString(joji::toString(p.role))
             << ",\"ip\":" << p.ip()
             << ",\"h\":" << p.hitsAllowed
             << ",\"r\":" << p.runsAllowed

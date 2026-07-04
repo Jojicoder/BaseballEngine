@@ -866,6 +866,7 @@ static PitcherBoxScore makePitcherEntry(const Player& p, bool isStarter) {
     PitcherBoxScore pbs;
     pbs.name = p.name;
     pbs.jerseyNumber = p.jerseyNumber;
+    pbs.role = p.pitcherRole;
     pbs.games = 1;
     pbs.gamesStarted = isStarter ? 1 : 0;
     return pbs;

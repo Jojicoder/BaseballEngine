@@ -39,6 +39,7 @@ struct PlayerBoxScore {
 struct PitcherBoxScore {
     std::string name;
     int jerseyNumber        = 0;
+    PitcherRole role        = PitcherRole::MiddleRelief; // roster-assigned bullpen role, not derived from this game's line
     int games              = 0;
     int gamesStarted       = 0;
     int outsRecorded       = 0;  // 3 outs = 1 IP
