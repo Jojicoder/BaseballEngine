@@ -204,8 +204,12 @@ FAでは、チームの勝負年と資金力が大きく影響する。
 - Georgetownは無駄なトレードをしない
 - Brooklynは長打力を求める
 - Ghostsは投手コアを守る
-- Foxes、Rams、Stallionsは若手を集める
+- Foxes、Ramsは若手中心に集める。Stallionsも同様だが、特にcontact型に絞って集める
 - Blazeは焦って少し損なトレードをする可能性がある
+- Newark Knights、Manayunk Runnersは足を使える選手なら格下チームとも積極的に組む
+- Kensington Ironは守備・投手の穴だけをピンポイントで埋め、派手な補強はしない
+- Anacostia Kingsは投手力の弱点を埋めるトレードを常に探している
+- Alexandria Cannons、Capitol Hill Senatorsは安定した中堅選手を好み、大きな入れ替えは避ける
 
 ---
 
@@ -429,7 +433,8 @@ JBLのチームAIは、ただ強い選手を集めるのではなく、球団ご
 - Manayunkは走る
 - Ghostsは投手で沈黙させる
 - Ravensは計算で勝つ
-- FoxesとRamsは未来を育てる
+- FoxesとStallionsはコンタクト型の若手に賭けて未来を育てる
+- Ramsは実力で劣っても諦めずに未来を育てる
 
 この設計なら、同じリーグの中でも各球団がまったく違う動きをするようになる。
 

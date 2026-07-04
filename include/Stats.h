@@ -9,6 +9,7 @@ namespace joji {
 struct PlayerBoxScore {
     std::string name;
     int age        = 0;
+    int jerseyNumber = 0;
     Position position = Position::CenterField;
     int atBats     = 0;
     int runs       = 0;
@@ -37,6 +38,7 @@ struct PlayerBoxScore {
 
 struct PitcherBoxScore {
     std::string name;
+    int jerseyNumber        = 0;
     int games              = 0;
     int gamesStarted       = 0;
     int outsRecorded       = 0;  // 3 outs = 1 IP

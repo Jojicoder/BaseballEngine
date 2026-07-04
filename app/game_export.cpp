@@ -344,6 +344,7 @@ std::string battersJson(const std::vector<joji::PlayerBoxScore>& stats,
         out << "{\"name\":" << joji::jsonString(p.name)
             << ",\"team\":" << joji::jsonString(teamName)
             << ",\"age\":" << p.age
+            << ",\"jerseyNumber\":" << p.jerseyNumber
             << ",\"position\":" << joji::jsonString(positionLabel(p.position))
             << ",\"ab\":" << p.atBats
             << ",\"r\":" << p.runs
@@ -369,6 +370,7 @@ std::string pitchersJson(const std::vector<joji::PitcherBoxScore>& stats,
         out << std::fixed << std::setprecision(1)
             << "{\"name\":" << joji::jsonString(p.name)
             << ",\"team\":" << joji::jsonString(teamName)
+            << ",\"jerseyNumber\":" << p.jerseyNumber
             << ",\"ip\":" << p.ip()
             << ",\"h\":" << p.hitsAllowed
             << ",\"r\":" << p.runsAllowed
@@ -492,7 +494,67 @@ GameExport simulateGame(const std::vector<joji::Team>& baseTeams,
         const auto* ab = engine.lastAtBat() ? &engine.lastAtBat().value() : nullptr;
 
         if (ab) {
+            // baseRunningEvents (steals/pickoffs) happen between pitches within
+            // this at-bat; interleave them by afterPitch so they land in the
+            // right spot in the play-by-play instead of all at once.
+            joji::GameState runningState = before;
+            std::size_t brIdx = 0;
+            const auto& brEvents = ab->baseRunningEvents;
+            auto emitBaseRunningEvent = [&](const joji::BaseRunningEvent& bre) {
+                using T = joji::BaseRunningEventType;
+                if (bre.type == T::StolenBase || bre.type == T::CaughtStealing) {
+                    if (bre.fromBase >= 1 && bre.fromBase <= 3) {
+                        runningState.bases[static_cast<std::size_t>(bre.fromBase - 1)] = std::nullopt;
+                    }
+                    if (bre.type == T::StolenBase) {
+                        if (bre.toBase >= 1 && bre.toBase <= 3) {
+                            runningState.bases[static_cast<std::size_t>(bre.toBase - 1)] = bre.runnerName;
+                        } else if (bre.toBase == 4) {
+                            if (before.isTop) ++runningState.awayScore; else ++runningState.homeScore;
+                        }
+                    } else {
+                        ++runningState.outs;
+                    }
+                    std::ostringstream ev;
+                    ev << "{\"type\":\"stolen_base\""
+                       << ",\"inning\":" << before.inning
+                       << ",\"half\":" << joji::jsonString(halfName(before.isTop))
+                       << ",\"isTop\":" << (before.isTop ? "true" : "false")
+                       << ",\"runner\":" << joji::jsonString(bre.runnerName)
+                       << ",\"base\":" << joji::jsonString(baseName(bre.toBase))
+                       << ",\"success\":" << (bre.type == T::StolenBase ? "true" : "false")
+                       << ",\"score\":" << scoreJson(runningState)
+                       << ",\"bases\":" << basesJson(runningState)
+                       << ",\"outs\":" << runningState.outs
+                       << "}";
+                    pushEvent(ev.str());
+                } else if (bre.type == T::PickoffAttempt || bre.type == T::PickoffOut) {
+                    if (bre.type == T::PickoffOut && bre.fromBase >= 1 && bre.fromBase <= 3) {
+                        runningState.bases[static_cast<std::size_t>(bre.fromBase - 1)] = std::nullopt;
+                        ++runningState.outs;
+                    }
+                    std::ostringstream ev;
+                    ev << "{\"type\":\"pickoff\""
+                       << ",\"inning\":" << before.inning
+                       << ",\"half\":" << joji::jsonString(halfName(before.isTop))
+                       << ",\"isTop\":" << (before.isTop ? "true" : "false")
+                       << ",\"runner\":" << joji::jsonString(bre.runnerName)
+                       << ",\"base\":" << joji::jsonString(baseName(bre.fromBase))
+                       << ",\"out\":" << (bre.type == T::PickoffOut ? "true" : "false")
+                       << ",\"score\":" << scoreJson(runningState)
+                       << ",\"bases\":" << basesJson(runningState)
+                       << ",\"outs\":" << runningState.outs
+                       << "}";
+                    pushEvent(ev.str());
+                }
+                // WildPitch/PassedBall/Balk: no matching frontend event type yet.
+            };
+
             for (const auto& pl : ab->pitchLogs) {
+                while (brIdx < brEvents.size() && brEvents[brIdx].afterPitch < pl.pitchNumber) {
+                    emitBaseRunningEvent(brEvents[brIdx]);
+                    ++brIdx;
+                }
                 std::ostringstream ev;
                 ev << std::fixed << std::setprecision(2);
                 ev << "{\"type\":\"pitch\""
@@ -545,6 +607,10 @@ GameExport simulateGame(const std::vector<joji::Team>& baseTeams,
                 }
                 ev << "}}";
                 pushEvent(ev.str());
+            }
+            while (brIdx < brEvents.size()) {
+                emitBaseRunningEvent(brEvents[brIdx]);
+                ++brIdx;
             }
         }
 

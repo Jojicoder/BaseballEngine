@@ -88,6 +88,7 @@ enum class PlayerRole {
 struct Player {
     std::string name;
     int age             = 27;
+    int jerseyNumber    = 0; // assigned per-roster in Team's constructor; 0 = unassigned
     Position    position        = Position::CenterField;
     int contact         = 50;
     int power           = 50;

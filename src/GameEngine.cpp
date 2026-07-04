@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <unordered_set>
 
 namespace joji {
 
@@ -13,6 +14,22 @@ namespace {
 
 double clampValue(double value, double min, double max) {
     return std::max(min, std::min(value, max));
+}
+
+// Deterministic per-team jersey numbers: derived from the player's name so a
+// given roster always produces the same numbers across runs/rebuilds, with
+// collisions (within the same team) resolved by walking forward to the next
+// free slot.
+void assignJerseyNumbers(std::vector<Player>& players, std::unordered_set<int>& used) {
+    for (auto& p : players) {
+        std::size_t h = std::hash<std::string>{}(p.name);
+        int num = static_cast<int>(h % 99) + 1; // 1..99
+        while (used.count(num)) {
+            num = (num % 99) + 1;
+        }
+        p.jerseyNumber = num;
+        used.insert(num);
+    }
 }
 
 // 走者刺殺: 送球した野手にアシスト+外野補殺、本塁カバーの捕手にプットアウト
@@ -763,6 +780,12 @@ Team::Team(std::string teamName, std::vector<Player> lineup,
     , league_(league) {
     if (lineup_.empty()) throw std::invalid_argument("Team lineup cannot be empty.");
     if (rotation_.empty()) throw std::invalid_argument("Team rotation cannot be empty.");
+
+    std::unordered_set<int> usedJerseyNumbers;
+    assignJerseyNumbers(lineup_, usedJerseyNumbers);
+    assignJerseyNumbers(rotation_, usedJerseyNumbers);
+    assignJerseyNumbers(bullpen_, usedJerseyNumbers);
+    assignJerseyNumbers(bench_, usedJerseyNumbers);
 }
 
 const BallparkConfig& Team::homeBallpark() const { return homeBallpark_; }
@@ -833,6 +856,7 @@ static std::vector<PlayerBoxScore> initPlayerStats(const Team& team) {
         pbs.name = p.name;
         pbs.position = p.position;
         pbs.age = p.age;
+        pbs.jerseyNumber = p.jerseyNumber;
         stats.push_back(pbs);
     }
     return stats;
@@ -841,6 +865,7 @@ static std::vector<PlayerBoxScore> initPlayerStats(const Team& team) {
 static PitcherBoxScore makePitcherEntry(const Player& p, bool isStarter) {
     PitcherBoxScore pbs;
     pbs.name = p.name;
+    pbs.jerseyNumber = p.jerseyNumber;
     pbs.games = 1;
     pbs.gamesStarted = isStarter ? 1 : 0;
     return pbs;
