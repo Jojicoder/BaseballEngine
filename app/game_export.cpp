@@ -573,15 +573,15 @@ GameExport simulateGame(const std::vector<joji::Team>& baseTeams,
                    << ",\"strikesAfter\":" << pl.countAfter.strikes
                    << ",\"balls\":" << pl.countBefore.balls
                    << ",\"strikes\":" << pl.countBefore.strikes
-                   << ",\"outsBefore\":" << before.outs
+                   << ",\"outsBefore\":" << runningState.outs
                    << ",\"outsAfter\":" << after.outs
-                   << ",\"outs\":" << before.outs
-                   << ",\"scoreBefore\":" << scoreJson(before)
+                   << ",\"outs\":" << runningState.outs
+                   << ",\"scoreBefore\":" << scoreJson(runningState)
                    << ",\"scoreAfter\":" << scoreJson(after)
-                   << ",\"score\":" << scoreJson(before)
-                   << ",\"basesBefore\":" << basesJson(before)
+                   << ",\"score\":" << scoreJson(runningState)
+                   << ",\"basesBefore\":" << basesJson(runningState)
                    << ",\"basesAfter\":" << basesJson(after)
-                   << ",\"bases\":" << basesJson(before)
+                   << ",\"bases\":" << basesJson(runningState)
                    << ",\"velo\":" << pl.pitch.pitchVelocity
                    << ",\"px\":" << pl.pitch.locationX
                    << ",\"pz\":" << pl.pitch.locationZ
