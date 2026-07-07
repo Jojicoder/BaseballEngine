@@ -59,6 +59,9 @@ struct GameExport {
     int awayScore = 0;
     int homeScore = 0;
     std::string gameFile;
+    std::string winPitcher;
+    std::string lossPitcher;
+    std::string savePitcher;
     std::string json;
 };
 
@@ -390,9 +393,9 @@ std::string pitchersJson(const std::vector<joji::PitcherBoxScore>& stats,
     return out.str();
 }
 
-std::string pitcherWithStat(const std::vector<joji::PitcherBoxScore>& awayStats,
-                            const std::vector<joji::PitcherBoxScore>& homeStats,
-                            const std::string& stat) {
+std::optional<std::string> findPitcherWithStat(const std::vector<joji::PitcherBoxScore>& awayStats,
+                                                const std::vector<joji::PitcherBoxScore>& homeStats,
+                                                const std::string& stat) {
     auto find = [&](const std::vector<joji::PitcherBoxScore>& stats) -> std::optional<std::string> {
         for (const auto& p : stats) {
             if (stat == "win" && p.wins > 0) return p.name;
@@ -401,8 +404,15 @@ std::string pitcherWithStat(const std::vector<joji::PitcherBoxScore>& awayStats,
         }
         return std::nullopt;
     };
-    if (auto name = find(awayStats)) return joji::jsonString(*name);
-    if (auto name = find(homeStats)) return joji::jsonString(*name);
+    if (auto name = find(awayStats)) return name;
+    if (auto name = find(homeStats)) return name;
+    return std::nullopt;
+}
+
+std::string pitcherWithStat(const std::vector<joji::PitcherBoxScore>& awayStats,
+                            const std::vector<joji::PitcherBoxScore>& homeStats,
+                            const std::string& stat) {
+    if (auto name = findPitcherWithStat(awayStats, homeStats, stat)) return joji::jsonString(*name);
     return "null";
 }
 
@@ -693,6 +703,9 @@ GameExport simulateGame(const std::vector<joji::Team>& baseTeams,
     exported.awayScore = gr.awayScore;
     exported.homeScore = gr.homeScore;
     exported.gameFile = "games/" + gameId + ".json";
+    exported.winPitcher = findPitcherWithStat(engine.awayPitcherStats(), engine.homePitcherStats(), "win").value_or("");
+    exported.lossPitcher = findPitcherWithStat(engine.awayPitcherStats(), engine.homePitcherStats(), "loss").value_or("");
+    exported.savePitcher = findPitcherWithStat(engine.awayPitcherStats(), engine.homePitcherStats(), "save").value_or("");
 
     std::ostringstream out;
     out << "{\n";
@@ -881,7 +894,8 @@ std::string scheduleLogLine(const GameExport& g) {
     std::ostringstream out;
     out << g.gameId << '\t' << g.date << '\t' << g.awayIdx << '\t' << g.homeIdx << '\t'
         << g.away << '\t' << g.home << '\t' << g.venue << '\t' << g.awayScore << '\t'
-        << g.homeScore << '\t' << g.gameFile;
+        << g.homeScore << '\t' << g.gameFile << '\t' << g.winPitcher << '\t' << g.lossPitcher
+        << '\t' << g.savePitcher;
     return out.str();
 }
 
@@ -910,6 +924,12 @@ std::vector<GameExport> readScheduleLog(const std::filesystem::path& path) {
         g.awayScore = std::stoi(cols[7]);
         g.homeScore = std::stoi(cols[8]);
         g.gameFile = cols[9];
+        // schedule-log.tsv rows written before the pitcher-decision columns
+        // existed only have 10 columns — default those games to "no decision"
+        // rather than throwing on out-of-range access.
+        g.winPitcher = cols.size() > 10 ? cols[10] : "";
+        g.lossPitcher = cols.size() > 11 ? cols[11] : "";
+        g.savePitcher = cols.size() > 12 ? cols[12] : "";
         rows.push_back(std::move(g));
     }
     return rows;
@@ -1009,6 +1029,9 @@ std::string seasonJson(const std::vector<joji::Team>& teams,
             << ",\"status\":\"final\""
             << ",\"finalScore\":{\"away\":" << g.awayScore << ",\"home\":" << g.homeScore << "}"
             << ",\"gameFile\":" << joji::jsonString(g.gameFile)
+            << ",\"winPitcher\":" << (g.winPitcher.empty() ? "null" : joji::jsonString(g.winPitcher))
+            << ",\"lossPitcher\":" << (g.lossPitcher.empty() ? "null" : joji::jsonString(g.lossPitcher))
+            << ",\"savePitcher\":" << (g.savePitcher.empty() ? "null" : joji::jsonString(g.savePitcher))
             << "}";
         if (i + 1 < games.size()) out << ",";
         out << "\n";
