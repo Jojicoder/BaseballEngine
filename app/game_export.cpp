@@ -4,6 +4,11 @@
 //   ./JojiGameExport [seed]
 //   ./JojiGameExport --season 2026 --all-games --out-dir public/jbl/seasons/2026 [--limit N]
 //   ./JojiGameExport --season 2026 --incremental --out-dir public/jbl/seasons/2026 [--through YYYY-MM-DD]
+//   ./JojiGameExport --season 2026 --playoffs --out-dir public/jbl/seasons/2026
+//
+// --playoffs needs the full regular season in <out-dir>/schedule-log.tsv. It writes
+// playoffs.json and playoffs/games/*.json without touching season.json or
+// games/index.json (so regular-season standings are unaffected).
 //
 // --incremental exports only games not already recorded in
 // <out-dir>/schedule-log.tsv, up through --through (defaults to today), and
@@ -41,6 +46,7 @@ struct CliOptions {
     bool seasonMode = false;
     bool allGames = false;
     bool incremental = false;
+    bool playoffs = false;
     int season = 2026;
     int limit = 0;
     std::string outDir;
@@ -1052,6 +1058,8 @@ CliOptions parseArgs(int argc, char* argv[]) {
             opts.allGames = true;
         } else if (arg == "--incremental") {
             opts.incremental = true;
+        } else if (arg == "--playoffs") {
+            opts.playoffs = true;
         } else if (arg == "--out-dir" && i + 1 < argc) {
             opts.outDir = argv[++i];
         } else if (arg == "--limit" && i + 1 < argc) {
@@ -1074,12 +1082,295 @@ void writeTextFile(const std::filesystem::path& path, const std::string& content
     out << contents;
 }
 
+// ── Postseason (MLB format) ─────────────────────────────────────────────────
+//
+// 6 teams: the 3 division winners (seeds 1–3, by record) and the 3 best
+// remaining teams as wild cards (seeds 4–6, by record).
+//
+//   Wild Card Series     (Bo3): #3 v #6, #4 v #5   — higher seed hosts every game
+//   Division Series      (Bo5): #1 v W(#4/#5), #2 v W(#3/#6)   — 2-2-1
+//   Championship Series  (Bo7): division series winners   — 2-3-2
+//
+// Seeds #1/#2 get a first-round bye. The bracket is fixed (no re-seeding).
+// Tie-breakers: win pct, head-to-head, run differential, then name.
+//
+// Every game is seeded from (season, series, game number), so re-running with
+// the same schedule-log.tsv always reproduces the same postseason.
+
+struct SeriesResult {
+    std::string id;
+    std::string round;
+    int bestOf = 3;
+    int topIdx = 0;
+    int bottomIdx = 0;
+    int topSeed = 0;
+    int bottomSeed = 0;
+    int topWins = 0;
+    int bottomWins = 0;
+    int winnerIdx = -1;
+    std::vector<GameExport> games;
+    std::vector<int> gameNumbers;
+};
+
+std::string addDays(const std::string& date, int days) {
+    std::tm tm{};
+    tm.tm_year = std::stoi(date.substr(0, 4)) - 1900;
+    tm.tm_mon = std::stoi(date.substr(5, 2)) - 1;
+    tm.tm_mday = std::stoi(date.substr(8, 2)) + days;
+    std::mktime(&tm);
+    char dateBuf[16];
+    std::strftime(dateBuf, sizeof(dateBuf), "%Y-%m-%d", &tm);
+    return dateBuf;
+}
+
+bool topHostsGame(int bestOf, int gameNumber) {
+    // gameNumber is 1-based.
+    if (bestOf == 3) return true;
+    if (bestOf == 5) return gameNumber <= 2 || gameNumber == 5;
+    return gameNumber <= 2 || gameNumber >= 6; // Bo7: 2-3-2
+}
+
+SeriesResult playSeries(const std::vector<joji::Team>& teams,
+                        int season,
+                        const std::string& id,
+                        const std::string& round,
+                        int bestOf,
+                        int seriesNo,
+                        int topIdx,
+                        int topSeed,
+                        int bottomIdx,
+                        int bottomSeed,
+                        const std::string& firstDate,
+                        std::vector<int>& playoffGamesPlayed) {
+    SeriesResult series;
+    series.id = id;
+    series.round = round;
+    series.bestOf = bestOf;
+    series.topIdx = topIdx;
+    series.bottomIdx = bottomIdx;
+    series.topSeed = topSeed;
+    series.bottomSeed = bottomSeed;
+
+    const int needed = bestOf / 2 + 1;
+    for (int g = 1; series.topWins < needed && series.bottomWins < needed; ++g) {
+        const bool topHome = topHostsGame(bestOf, g);
+        const int homeIdx = topHome ? topIdx : bottomIdx;
+        const int awayIdx = topHome ? bottomIdx : topIdx;
+        // Postseason uses a 4-man rotation (the 5th starter is skipped).
+        const int awaySlot = playoffGamesPlayed[static_cast<std::size_t>(awayIdx)]++ % 4;
+        const int homeSlot = playoffGamesPlayed[static_cast<std::size_t>(homeIdx)]++ % 4;
+
+        const std::string gameId = std::to_string(season) + "-P-" + id + "-G" + std::to_string(g);
+        const uint32_t seed = static_cast<uint32_t>(season * 100000 + 90000 + seriesNo * 10 + g);
+        GameExport game = simulateGame(teams, awayIdx, homeIdx, season, seed, awaySlot, homeSlot,
+                                       addDays(firstDate, g - 1), gameId);
+        game.gameFile = "playoffs/games/" + gameId + ".json";
+
+        if (game.awayScore == game.homeScore) {
+            throw std::runtime_error("Playoff game ended tied: " + gameId);
+        }
+        const bool awayWon = game.awayScore > game.homeScore;
+        const bool topWon = (awayWon && awayIdx == topIdx) || (!awayWon && homeIdx == topIdx);
+        if (topWon) series.topWins++; else series.bottomWins++;
+        series.games.push_back(std::move(game));
+        series.gameNumbers.push_back(g);
+    }
+    series.winnerIdx = series.topWins > series.bottomWins ? topIdx : bottomIdx;
+    return series;
+}
+
+std::string lastGameDate(const SeriesResult& series) {
+    return series.games.empty() ? std::string() : series.games.back().date;
+}
+
+std::string playoffsJson(const std::vector<joji::Team>& teams,
+                         int season,
+                         const std::vector<int>& seedTeam, // index 1..6
+                         const std::vector<TeamStanding>& standings,
+                         const std::vector<SeriesResult>& allSeries,
+                         int championIdx) {
+    std::ostringstream out;
+    auto teamName = [&](int idx) { return joji::jsonString(teams[static_cast<std::size_t>(idx)].name()); };
+
+    out << "{\n  \"schemaVersion\":1,\n  \"season\":" << season << ",\n";
+    out << "  \"format\":\"mlb-6\",\n";
+    out << "  \"champion\":" << teamName(championIdx) << ",\n";
+    out << "  \"seeds\":[\n";
+    for (int s = 1; s <= 6; ++s) {
+        const int idx = seedTeam[static_cast<std::size_t>(s)];
+        const auto& st = standings[static_cast<std::size_t>(idx)];
+        out << "    {\"seed\":" << s << ",\"team\":" << teamName(idx)
+            << ",\"division\":" << joji::jsonString(leagueLabel(teams[static_cast<std::size_t>(idx)].league()))
+            << ",\"wins\":" << st.wins << ",\"losses\":" << st.losses
+            << ",\"divisionWinner\":" << (s <= 3 ? "true" : "false") << "}";
+        out << (s < 6 ? ",\n" : "\n");
+    }
+    out << "  ],\n  \"series\":[\n";
+    for (std::size_t i = 0; i < allSeries.size(); ++i) {
+        const auto& s = allSeries[i];
+        out << "    {\"id\":" << joji::jsonString(s.id)
+            << ",\"round\":" << joji::jsonString(s.round)
+            << ",\"bestOf\":" << s.bestOf
+            << ",\"top\":{\"team\":" << teamName(s.topIdx) << ",\"seed\":" << s.topSeed << "}"
+            << ",\"bottom\":{\"team\":" << teamName(s.bottomIdx) << ",\"seed\":" << s.bottomSeed << "}"
+            << ",\"wins\":{" << teamName(s.topIdx) << ":" << s.topWins << ","
+            << teamName(s.bottomIdx) << ":" << s.bottomWins << "}"
+            << ",\"winner\":" << teamName(s.winnerIdx)
+            << ",\"games\":[";
+        for (std::size_t g = 0; g < s.games.size(); ++g) {
+            out << joji::jsonString(s.games[g].gameId) << (g + 1 < s.games.size() ? "," : "");
+        }
+        out << "]}" << (i + 1 < allSeries.size() ? ",\n" : "\n");
+    }
+    out << "  ],\n  \"games\":[\n";
+    bool first = true;
+    for (const auto& s : allSeries) {
+        for (std::size_t g = 0; g < s.games.size(); ++g) {
+            const auto& game = s.games[g];
+            if (!first) out << ",\n";
+            first = false;
+            out << "    {\"gameId\":" << joji::jsonString(game.gameId)
+                << ",\"date\":" << joji::jsonString(game.date)
+                << ",\"away\":" << joji::jsonString(game.away)
+                << ",\"home\":" << joji::jsonString(game.home)
+                << ",\"venue\":" << joji::jsonString(game.venue)
+                << ",\"status\":\"final\""
+                << ",\"finalScore\":{\"away\":" << game.awayScore << ",\"home\":" << game.homeScore << "}"
+                << ",\"gameFile\":" << joji::jsonString(game.gameFile)
+                << ",\"winPitcher\":" << (game.winPitcher.empty() ? "null" : joji::jsonString(game.winPitcher))
+                << ",\"lossPitcher\":" << (game.lossPitcher.empty() ? "null" : joji::jsonString(game.lossPitcher))
+                << ",\"savePitcher\":" << (game.savePitcher.empty() ? "null" : joji::jsonString(game.savePitcher))
+                << ",\"series\":" << joji::jsonString(s.id)
+                << ",\"gameNumber\":" << s.gameNumbers[g] << "}";
+        }
+    }
+    out << "\n  ]\n}\n";
+    return out.str();
+}
+
+void writeTextFile(const std::filesystem::path& path, const std::string& contents);
+
+int exportPlayoffs(const std::vector<joji::Team>& teams, int season, const std::filesystem::path& root) {
+    const std::vector<GameExport> regular = readScheduleLog(root / "schedule-log.tsv");
+    if (static_cast<int>(regular.size()) != kExpectedSeasonGames) {
+        std::cerr << "Regular season is not complete (" << regular.size() << "/" << kExpectedSeasonGames
+                  << " games in schedule-log.tsv). Playoffs need the full season.\n";
+        return 1;
+    }
+
+    const std::size_t n = teams.size();
+    std::vector<TeamStanding> standings(n);
+    std::vector<std::vector<int>> headToHead(n, std::vector<int>(n, 0));
+    std::string lastDate;
+    for (const auto& g : regular) {
+        auto& away = standings[static_cast<std::size_t>(g.awayIdx)];
+        auto& home = standings[static_cast<std::size_t>(g.homeIdx)];
+        away.rs += g.awayScore; away.ra += g.homeScore;
+        home.rs += g.homeScore; home.ra += g.awayScore;
+        if (g.awayScore > g.homeScore) {
+            away.wins++; home.losses++;
+            headToHead[static_cast<std::size_t>(g.awayIdx)][static_cast<std::size_t>(g.homeIdx)]++;
+        } else {
+            home.wins++; away.losses++;
+            headToHead[static_cast<std::size_t>(g.homeIdx)][static_cast<std::size_t>(g.awayIdx)]++;
+        }
+        if (g.date > lastDate) lastDate = g.date;
+    }
+
+    // true if team a ranks ahead of team b.
+    auto better = [&](int a, int b) {
+        const auto& sa = standings[static_cast<std::size_t>(a)];
+        const auto& sb = standings[static_cast<std::size_t>(b)];
+        const long lhs = static_cast<long>(sa.wins) * (sb.wins + sb.losses);
+        const long rhs = static_cast<long>(sb.wins) * (sa.wins + sa.losses);
+        if (lhs != rhs) return lhs > rhs;
+        const int hA = headToHead[static_cast<std::size_t>(a)][static_cast<std::size_t>(b)];
+        const int hB = headToHead[static_cast<std::size_t>(b)][static_cast<std::size_t>(a)];
+        if (hA != hB) return hA > hB;
+        const int diffA = sa.rs - sa.ra;
+        const int diffB = sb.rs - sb.ra;
+        if (diffA != diffB) return diffA > diffB;
+        return teams[static_cast<std::size_t>(a)].name() < teams[static_cast<std::size_t>(b)].name();
+    };
+
+    std::map<int, std::vector<int>> byDivision;
+    for (std::size_t i = 0; i < n; ++i) {
+        byDivision[static_cast<int>(teams[i].league())].push_back(static_cast<int>(i));
+    }
+    std::vector<int> winners;
+    std::vector<int> rest;
+    for (auto& [division, members] : byDivision) {
+        std::sort(members.begin(), members.end(), better);
+        winners.push_back(members.front());
+        rest.insert(rest.end(), members.begin() + 1, members.end());
+    }
+    if (winners.size() != 3) {
+        std::cerr << "Expected 3 divisions, found " << winners.size() << ".\n";
+        return 1;
+    }
+    std::sort(winners.begin(), winners.end(), better);
+    std::sort(rest.begin(), rest.end(), better);
+
+    std::vector<int> seedTeam(7, -1); // 1-based
+    for (int i = 0; i < 3; ++i) seedTeam[static_cast<std::size_t>(i + 1)] = winners[static_cast<std::size_t>(i)];
+    for (int i = 0; i < 3; ++i) seedTeam[static_cast<std::size_t>(i + 4)] = rest[static_cast<std::size_t>(i)];
+    auto seedOf = [&](int idx) {
+        for (int s = 1; s <= 6; ++s) if (seedTeam[static_cast<std::size_t>(s)] == idx) return s;
+        return 0;
+    };
+
+    std::vector<int> playoffGames(n, 0);
+    std::vector<SeriesResult> all;
+    const std::string wcStart = addDays(lastDate, 2);
+
+    all.push_back(playSeries(teams, season, "wc1", "Wild Card Series", 3, 1, seedTeam[3], 3, seedTeam[6], 6, wcStart, playoffGames));
+    all.push_back(playSeries(teams, season, "wc2", "Wild Card Series", 3, 2, seedTeam[4], 4, seedTeam[5], 5, wcStart, playoffGames));
+
+    const std::string sfStart = addDays(std::max(lastGameDate(all[0]), lastGameDate(all[1])), 2);
+    const int wc1Winner = all[0].winnerIdx;
+    const int wc2Winner = all[1].winnerIdx;
+    all.push_back(playSeries(teams, season, "sf1", "Division Series", 5, 3, seedTeam[1], 1, wc2Winner, seedOf(wc2Winner), sfStart, playoffGames));
+    all.push_back(playSeries(teams, season, "sf2", "Division Series", 5, 4, seedTeam[2], 2, wc1Winner, seedOf(wc1Winner), sfStart, playoffGames));
+
+    const std::string finalStart = addDays(std::max(lastGameDate(all[2]), lastGameDate(all[3])), 2);
+    int topIdx = all[2].winnerIdx;
+    int bottomIdx = all[3].winnerIdx;
+    if (seedOf(bottomIdx) < seedOf(topIdx)) std::swap(topIdx, bottomIdx); // better seed hosts
+    all.push_back(playSeries(teams, season, "final", "Championship Series", 7, 5, topIdx, seedOf(topIdx), bottomIdx, seedOf(bottomIdx), finalStart, playoffGames));
+
+    const int champion = all.back().winnerIdx;
+
+    for (const auto& series : all) {
+        for (const auto& game : series.games) {
+            writeTextFile(root / game.gameFile, game.json);
+        }
+    }
+    writeTextFile(root / "playoffs.json", playoffsJson(teams, season, seedTeam, standings, all, champion));
+
+    for (const auto& series : all) {
+        std::cerr << series.round << " " << series.id << ": "
+                  << teams[static_cast<std::size_t>(series.topIdx)].name() << " (#" << series.topSeed << ") "
+                  << series.topWins << "-" << series.bottomWins << " "
+                  << teams[static_cast<std::size_t>(series.bottomIdx)].name() << " (#" << series.bottomSeed << ")\n";
+    }
+    std::cerr << "Champion: " << teams[static_cast<std::size_t>(champion)].name() << "\n";
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
     try {
         const CliOptions opts = parseArgs(argc, argv);
         const auto teams = joji::allTeams();
+
+        if (opts.playoffs) {
+            if (opts.outDir.empty()) {
+                std::cerr << "Usage: ./JojiGameExport --season YEAR --playoffs --out-dir DIR\n";
+                return 2;
+            }
+            return exportPlayoffs(teams, opts.season, std::filesystem::path(opts.outDir));
+        }
 
         if (opts.incremental) {
             if (opts.outDir.empty()) {
