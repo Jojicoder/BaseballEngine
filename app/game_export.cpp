@@ -5,10 +5,16 @@
 //   ./JojiGameExport --season 2026 --all-games --out-dir public/jbl/seasons/2026 [--limit N]
 //   ./JojiGameExport --season 2026 --incremental --out-dir public/jbl/seasons/2026 [--through YYYY-MM-DD]
 //   ./JojiGameExport --season 2026 --playoffs --out-dir public/jbl/seasons/2026
+//   ./JojiGameExport --season 2027 --draft [--draft-seed N] --incremental --out-dir public/jbl/seasons/2027
 //
 // --playoffs needs the full regular season in <out-dir>/schedule-log.tsv. It writes
 // playoffs.json and playoffs/games/*.json without touching season.json or
 // games/index.json (so regular-season standings are unaffected).
+//
+// --draft runs the offseason draft (seed = --draft-seed, default: the season year)
+// and plays the season with the resulting rosters. It applies to every mode above
+// (including --playoffs), so pass it consistently for a given season. Without it the
+// hand-authored rosters in Teams.cpp are used, which is what 2026 was published with.
 //
 // --incremental exports only games not already recorded in
 // <out-dir>/schedule-log.tsv, up through --through (defaults to today), and
@@ -16,6 +22,7 @@
 // that were exported on a previous run.
 
 #include "BallPhysicsEngine.h"
+#include "DraftEngine.h"
 #include "GameEngine.h"
 #include "JsonExporter.h"
 #include "SeasonDates.h"
@@ -47,6 +54,8 @@ struct CliOptions {
     bool allGames = false;
     bool incremental = false;
     bool playoffs = false;
+    bool draft = false;
+    std::optional<unsigned> draftSeed;
     int season = 2026;
     int limit = 0;
     std::string outDir;
@@ -1056,6 +1065,10 @@ CliOptions parseArgs(int argc, char* argv[]) {
             opts.incremental = true;
         } else if (arg == "--playoffs") {
             opts.playoffs = true;
+        } else if (arg == "--draft") {
+            opts.draft = true;
+        } else if (arg == "--draft-seed" && i + 1 < argc) {
+            opts.draftSeed = static_cast<unsigned>(std::stoul(argv[++i]));
         } else if (arg == "--out-dir" && i + 1 < argc) {
             opts.outDir = argv[++i];
         } else if (arg == "--limit" && i + 1 < argc) {
@@ -1076,6 +1089,27 @@ void writeTextFile(const std::filesystem::path& path, const std::string& content
         throw std::runtime_error("Unable to write " + path.string());
     }
     out << contents;
+}
+
+// The rosters a season is played with: the hand-authored teams, optionally after
+// that season's draft (see include/DraftEngine.h).
+std::vector<joji::Team> loadTeams(const CliOptions& opts) {
+    std::vector<joji::Team> teams = joji::allTeams();
+    if (!opts.draft) return teams;
+
+    joji::DraftConfig config;
+    config.season = opts.season;
+    config.seed = opts.draftSeed.value_or(static_cast<unsigned>(opts.season));
+    joji::DraftResult draft = joji::runDraft(teams, config);
+    std::vector<joji::Team> drafted = joji::applyDraftToRosters(teams, draft, config);
+
+    int promoted = 0;
+    for (const auto& change : draft.changes) {
+        if (change.type == joji::RosterChangeType::Promoted) ++promoted;
+    }
+    std::cerr << "Draft " << config.season << " (seed " << config.seed << "): " << promoted
+              << " rookies made a roster.\n";
+    return drafted;
 }
 
 // ── Postseason (MLB format) ─────────────────────────────────────────────────
@@ -1244,8 +1278,6 @@ std::string playoffsJson(const std::vector<joji::Team>& teams,
     return out.str();
 }
 
-void writeTextFile(const std::filesystem::path& path, const std::string& contents);
-
 int exportPlayoffs(const std::vector<joji::Team>& teams, int season, const std::filesystem::path& root) {
     const std::vector<GameExport> regular = readScheduleLog(root / "schedule-log.tsv");
     if (static_cast<int>(regular.size()) != kExpectedSeasonGames) {
@@ -1358,7 +1390,7 @@ int exportPlayoffs(const std::vector<joji::Team>& teams, int season, const std::
 int main(int argc, char* argv[]) {
     try {
         const CliOptions opts = parseArgs(argc, argv);
-        const auto teams = joji::allTeams();
+        const auto teams = loadTeams(opts);
 
         if (opts.playoffs) {
             if (opts.outDir.empty()) {
