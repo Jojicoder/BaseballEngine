@@ -18,6 +18,7 @@
 #include "BallPhysicsEngine.h"
 #include "GameEngine.h"
 #include "JsonExporter.h"
+#include "SeasonDates.h"
 #include "Teams.h"
 
 #include <algorithm>
@@ -39,7 +40,6 @@ namespace {
 constexpr int kIntraSeries = 18;
 constexpr int kInterSeries = 6;
 constexpr int kExpectedSeasonGames = 1458;
-constexpr int kRegularSeasonDays = 178;
 constexpr int kSeasonRounds = 162;
 
 struct CliOptions {
@@ -124,15 +124,10 @@ std::string todayDate() {
     return dateBuf;
 }
 
+// dayIndex counts playing days from Opening Day; the All-Star break (and any other
+// no-game days) are skipped.  See include/SeasonDates.h.
 std::string dateForDay(int season, int dayIndex) {
-    std::tm tm{};
-    tm.tm_year = season - 1900;
-    tm.tm_mon = 3;
-    tm.tm_mday = 1 + dayIndex;
-    std::mktime(&tm);
-    char dateBuf[16];
-    std::strftime(dateBuf, sizeof(dateBuf), "%Y-%m-%d", &tm);
-    return dateBuf;
+    return joji::seasonDates(season).dateForPlayingDay(dayIndex);
 }
 
 std::string halfName(bool isTop) {
@@ -794,9 +789,10 @@ std::vector<PendingGame> buildSchedule(const std::vector<joji::Team>& teams, int
     std::mt19937 rng(static_cast<uint32_t>(season * 2654435761u));
     std::vector<PendingGame> scheduled;
     scheduled.reserve(kExpectedSeasonGames);
+    const int playingDays = joji::seasonDates(season).playingDays();
     auto appendRound = [&](int round, std::vector<std::pair<int, int>> pairs) {
         const int dayIndex = kSeasonRounds > 1
-            ? (round * (kRegularSeasonDays - 1)) / (kSeasonRounds - 1)
+            ? (round * (playingDays - 1)) / (kSeasonRounds - 1)
             : 0;
         std::shuffle(pairs.begin(), pairs.end(), rng);
         for (const auto& pair : pairs) {
