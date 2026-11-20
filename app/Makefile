@@ -28,6 +28,7 @@ ENGINE_SOURCES := \
 	../src/RunExpectancy.cpp \
 	../src/SwingDecisionEngine.cpp \
 	../src/SwingEngine.cpp \
+	../src/DraftEngine.cpp \
 	../src/Teams.cpp \
 	../src/ZoneJudge.cpp
 SOURCES := main.cpp \
@@ -47,6 +48,9 @@ SEASON_SOURCES := season_runner.cpp \
 	$(ENGINE_SOURCES)
 LEAGUE_SOURCES := league_runner.cpp \
 	$(ENGINE_SOURCES)
+DRAFT_TARGET := $(BUILD_DIR)/JojiDraftRunner
+DRAFT_SOURCES := draft_runner.cpp \
+	$(ENGINE_SOURCES)
 GAME_EXPORT_TARGET := $(BUILD_DIR)/JojiGameExport
 GAME_EXPORT_SOURCES := game_export.cpp \
 	$(ENGINE_SOURCES)
@@ -54,7 +58,7 @@ PITCHCHECK_TARGET := $(BUILD_DIR)/JojiPitchCheck
 PITCHCHECK_SOURCES := pitch_scoring_check.cpp \
 	$(ENGINE_SOURCES)
 
-.PHONY: all run sfml sfml-run atbat atbat-run test stats stats-run analysis analysis-run season season-run league league-run pitchcheck game-export clean
+.PHONY: all run sfml sfml-run atbat atbat-run test stats stats-run analysis analysis-run season season-run league league-run pitchcheck game-export draft draft-run clean
 
 all: $(TARGET)
 
@@ -132,6 +136,15 @@ pitchcheck: $(PITCHCHECK_TARGET)
 $(PITCHCHECK_TARGET): $(PITCHCHECK_SOURCES)
 	mkdir -p $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(PITCHCHECK_SOURCES) -o $(PITCHCHECK_TARGET)
+
+draft: $(DRAFT_TARGET)
+
+$(DRAFT_TARGET): $(DRAFT_SOURCES)
+	mkdir -p $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) $(DRAFT_SOURCES) -o $(DRAFT_TARGET)
+
+draft-run: draft
+	./$(DRAFT_TARGET) $(ARGS)
 
 game-export: $(GAME_EXPORT_TARGET)
 

@@ -24,6 +24,7 @@ set(JOJI_ENGINE_SOURCES
     src/RunExpectancy.cpp
     src/SwingDecisionEngine.cpp
     src/SwingEngine.cpp
+    src/DraftEngine.cpp
     src/Teams.cpp
     src/ZoneJudge.cpp
 )
@@ -53,6 +54,10 @@ joji_add_app(JojiPitchCheck app/pitch_scoring_check.cpp)
 
 find_package(Threads REQUIRED)
 target_link_libraries(JojiSeasonRunner PRIVATE Threads::Threads)
+
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/app/draft_runner.cpp")
+    joji_add_app(JojiDraftRunner app/draft_runner.cpp)
+endif()
 
 if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/app/game_export.cpp")
     joji_add_app(JojiGameExport app/game_export.cpp)

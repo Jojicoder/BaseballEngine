@@ -1,15 +1,20 @@
 #include "AtBatEngine.h"
 #include "AnimationPlanBuilder.h"
 #include "BallPhysicsEngine.h"
+#include "DraftEngine.h"
 #include "JsonExporter.h"
 #include "PlayResolutionEngine.h"
 #include "Random.h"
 #include "RunExpectancy.h"
+#include "Teams.h"
 #include "test_support.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <iostream>
+#include <map>
 #include <optional>
+#include <set>
 #include <string>
 
 namespace {
@@ -316,6 +321,176 @@ void testAnimationPlanBuilder() {
     CHECK(joji_tests::isValidJson(json));
 }
 
+// ── Draft engine ──────────────────────────────────────────────────────────────
+
+std::string draftFingerprint(const joji::DraftResult& result) {
+    std::string out;
+    for (const auto& pick : result.picks) {
+        out += std::to_string(pick.overall) + ":" + pick.team + ":" + std::to_string(pick.prospectId) + ";";
+    }
+    for (const auto& change : result.changes) {
+        out += change.team + "|" + change.player + "|" + change.replaced + "|" + std::to_string(change.overall) + ";";
+    }
+    for (const auto& prospect : result.pool) {
+        out += prospect.name + std::to_string(prospect.overall) + ";";
+    }
+    return out;
+}
+
+void testDraftDeterministic() {
+    const auto teams = joji::allTeams();
+    joji::DraftConfig config;
+    config.seed = 7;
+
+    joji::DraftResult first = joji::runDraft(teams, config);
+    joji::applyDraftToRosters(teams, first, config);
+    joji::DraftResult second = joji::runDraft(teams, config);
+    joji::applyDraftToRosters(teams, second, config);
+    CHECK(draftFingerprint(first) == draftFingerprint(second));
+
+    joji::DraftConfig other = config;
+    other.seed = 8;
+    joji::DraftResult third = joji::runDraft(teams, other);
+    joji::applyDraftToRosters(teams, third, other);
+    CHECK(draftFingerprint(first) != draftFingerprint(third));
+}
+
+void testDraftPicksAreComplete() {
+    const auto teams = joji::allTeams();
+    joji::DraftConfig config;
+    const joji::DraftResult result = joji::runDraft(teams, config);
+
+    CHECK(result.picks.size() == teams.size() * static_cast<std::size_t>(config.rounds));
+    CHECK(result.pool.size() >= result.picks.size());
+
+    std::set<int> prospects;
+    std::map<std::string, int> perTeam;
+    for (const auto& pick : result.picks) {
+        prospects.insert(pick.prospectId);
+        ++perTeam[pick.team];
+    }
+    CHECK(prospects.size() == result.picks.size());  // nobody drafted twice
+    CHECK(perTeam.size() == teams.size());
+    for (const auto& entry : perTeam) CHECK(entry.second == config.rounds);
+
+    // Snake: the team that picks last in round 1 picks first in round 2.
+    const std::size_t n = teams.size();
+    CHECK(result.picks[n - 1].team == result.picks[n].team);
+    CHECK(result.picks[0].team == result.picks[2 * n - 1].team);
+}
+
+void testProspectPoolIsSane() {
+    const auto teams = joji::allTeams();
+    std::set<std::string> existing;
+    for (const auto& team : teams) {
+        for (const auto& p : team.lineup()) existing.insert(p.name);
+        for (const auto& p : team.rotation()) existing.insert(p.name);
+        for (const auto& p : team.bullpen()) existing.insert(p.name);
+        for (const auto& p : team.bench()) existing.insert(p.name);
+    }
+
+    joji::DraftConfig config;
+    const joji::DraftResult result = joji::runDraft(teams, config);
+
+    std::set<std::string> names;
+    int pitchers = 0;
+    for (const auto& prospect : result.pool) {
+        const joji::Player& p = prospect.asPlayer;
+        CHECK(names.insert(prospect.name).second);              // unique within the pool
+        CHECK(existing.count(prospect.name) == 0);               // never clashes with a current player
+        CHECK(prospect.age >= 18 && prospect.age <= 22);
+        CHECK(prospect.potential >= prospect.readiness);
+        const bool isPitcher = prospect.position == joji::Position::Pitcher;
+        if (isPitcher) {
+            ++pitchers;
+            CHECK(!p.arsenal.empty());
+            CHECK(p.pitchingVelocity >= 30 && p.pitchingVelocity <= 95);
+            CHECK(p.pitchingStamina >= 30 && p.pitchingStamina <= 95);
+        } else {
+            CHECK(p.contact >= 30 && p.contact <= 95);
+            CHECK(p.power >= 30 && p.power <= 95);
+        }
+    }
+    CHECK(pitchers > 0 && pitchers < static_cast<int>(result.pool.size()));
+}
+
+void testDraftKeepsRosterShape() {
+    const auto teams = joji::allTeams();
+    joji::DraftConfig config;
+    config.seed = 3;
+    joji::DraftResult result = joji::runDraft(teams, config);
+    const auto updated = joji::applyDraftToRosters(teams, result, config);
+
+    CHECK(updated.size() == teams.size());
+    for (std::size_t i = 0; i < teams.size(); ++i) {
+        CHECK(updated[i].name() == teams[i].name());
+        CHECK(updated[i].lineup().size() == teams[i].lineup().size());
+        CHECK(updated[i].rotation().size() == teams[i].rotation().size());
+        CHECK(updated[i].bullpen().size() == teams[i].bullpen().size());
+        CHECK(updated[i].bench().size() == teams[i].bench().size());
+        CHECK(updated[i].league() == teams[i].league());
+        // Starters never lose their jobs in v1.
+        for (std::size_t j = 0; j < teams[i].lineup().size(); ++j) {
+            CHECK(updated[i].lineup()[j].name == teams[i].lineup()[j].name);
+        }
+        for (std::size_t j = 0; j < teams[i].rotation().size(); ++j) {
+            CHECK(updated[i].rotation()[j].name == teams[i].rotation()[j].name);
+        }
+    }
+
+    int promoted = 0;
+    int released = 0;
+    int minors = 0;
+    for (const auto& change : result.changes) {
+        if (change.type == joji::RosterChangeType::Promoted) ++promoted;
+        else if (change.type == joji::RosterChangeType::Released) ++released;
+        else ++minors;
+    }
+    CHECK(promoted == released);                          // every promotion displaces exactly one player
+    CHECK(promoted + minors == static_cast<int>(result.picks.size()));  // every pick is accounted for
+}
+
+void testDraftPromotionRateIsReasonable() {
+    const auto teams = joji::allTeams();
+    int promoted = 0;
+    const int seeds = 40;
+    for (int seed = 1; seed <= seeds; ++seed) {
+        joji::DraftConfig config;
+        config.seed = static_cast<unsigned>(seed);
+        joji::DraftResult result = joji::runDraft(teams, config);
+        joji::applyDraftToRosters(teams, result, config);
+        for (const auto& change : result.changes) {
+            if (change.type == joji::RosterChangeType::Promoted) ++promoted;
+        }
+    }
+    const double perTeam = static_cast<double>(promoted) / seeds / static_cast<double>(teams.size());
+    // Default margin targets ~1.8 roster moves per team; guard against drift to "nobody" or "everybody".
+    CHECK(perTeam > 0.8 && perTeam < 3.0);
+}
+
+void testDraftStrategyIsPluggable() {
+    const auto teams = joji::allTeams();
+    joji::DraftConfig config;
+    config.seed = 5;
+    // Always take the best remaining prospect: the very first pick must be the pool's best.
+    const joji::DraftStrategy best = [](const std::vector<joji::DraftProspect>& available,
+                                        const joji::Team&, joji::Random&) {
+        std::size_t top = 0;
+        for (std::size_t i = 1; i < available.size(); ++i) {
+            if (available[i].overall > available[top].overall) top = i;
+        }
+        return top;
+    };
+    const joji::DraftResult result = joji::runDraft(teams, config, best);
+    int bestOverall = 0;
+    int firstPickId = -1;
+    for (const auto& prospect : result.pool) bestOverall = std::max(bestOverall, prospect.overall);
+    for (const auto& prospect : result.pool) {
+        if (prospect.id == result.picks[0].prospectId) firstPickId = prospect.overall;
+    }
+    CHECK(firstPickId == bestOverall);
+}
+
 } // namespace
 
 int main() {
@@ -327,6 +502,12 @@ int main() {
     testFieldingPhysicsBoundaries();
     testDeterministicFieldingBoundaries();
     testAnimationPlanBuilder();
+    testDraftDeterministic();
+    testDraftPicksAreComplete();
+    testProspectPoolIsSane();
+    testDraftKeepsRosterShape();
+    testDraftPromotionRateIsReasonable();
+    testDraftStrategyIsPluggable();
     joji_tests::testJsonSyntaxChecker();
 
     if (joji_tests::failures > 0) {

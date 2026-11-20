@@ -17,6 +17,7 @@ SOURCES := app/main.cpp \
 	src/RunExpectancy.cpp \
 	src/SwingDecisionEngine.cpp \
 	src/SwingEngine.cpp \
+	src/DraftEngine.cpp \
 	src/Teams.cpp \
 	src/ZoneJudge.cpp
 
