@@ -9,6 +9,7 @@
 #include "Team.h"
 
 #include <iosfwd>
+#include <array>
 #include <map>
 #include <optional>
 #include <string>
@@ -251,9 +252,12 @@ private:
     // 現在投手対各打者の打席数 (投手交代でリセット) — time-through-order 用
     std::unordered_map<std::string, int> currentPitcherABsVsBatter_;
 
-    // 先発 W 資格: 5 回以上投げてリードで降板したとき true
-    bool awayStarterPotentialWin_ = false;
-    bool homeStarterPotentialWin_ = false;
+    // 勝利・敗戦投手の記録 (index 0 = away, 1 = home)。
+    // そのチームが「最後に」リードを奪った瞬間の、自軍投手 (W 候補) と相手投手 (L 候補)。
+    // リードを奪われて取り返すたびに上書きされるので、試合終了時の値が勝敗の記録になる。
+    std::array<std::string, 2> winCandidate_;
+    std::array<std::string, 2> lossCandidate_;
+    void noteRunScored();   // 得点が入るたびに呼ぶ (リードを奪ったか判定)
 
     // 連投疲労マップ: pitcher name → 前回登板からの休養日数 (0=前日登板)
     std::map<std::string, int> fatigueMap_;

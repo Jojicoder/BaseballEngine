@@ -29,6 +29,7 @@ void GameEngine::advanceAllRunnersOneBase(const std::string& reason) {
         state_.bases[2].reset();
         if (state_.isTop) { state_.awayScore += 1; }
         else              { state_.homeScore += 1; }
+        noteRunScored();
         currentHalfInningRuns_ += 1;
         currentPitcherRunsAllowed() += 1;
         logs_.push_back(GameLog{state_.inning, state_.isTop, runner + " scores on " + reason + "."});
@@ -311,6 +312,7 @@ void GameEngine::scoreRunner(PlayResult& result, const std::string& runnerName) 
     } else {
         state_.homeScore += 1;
     }
+    noteRunScored();
     result.runsScored += 1;
     currentHalfInningRuns_ += 1;
     currentPitcherRunsAllowed() += 1;

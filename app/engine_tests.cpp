@@ -2,6 +2,7 @@
 #include "AnimationPlanBuilder.h"
 #include "BallPhysicsEngine.h"
 #include "DraftEngine.h"
+#include "GameEngine.h"
 #include "JsonExporter.h"
 #include "PlayResolutionEngine.h"
 #include "Random.h"
@@ -15,6 +16,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 
 namespace {
@@ -491,6 +493,46 @@ void testDraftStrategyIsPluggable() {
     CHECK(firstPickId == bestOverall);
 }
 
+// Every game has exactly one winning and one losing pitcher (on the right teams), and the
+// winning pitcher never also gets the save.
+void testPitcherDecisions() {
+    const auto teams = joji::allTeams();
+    int starterLosses = 0;
+    for (unsigned game = 0; game < 60; ++game) {
+        const auto& away = teams[game % teams.size()];
+        const auto& home = teams[(game * 7 + 3) % teams.size()];
+        if (away.name() == home.name()) continue;
+
+        joji::GameEngine engine(away, home, joji::Random{std::optional<std::uint32_t>{5000u + game}},
+                                joji::GameRules{}, home.homeBallpark());
+        engine.setFastMode(true);
+        std::ostringstream sink;
+        engine.simulate(sink);
+
+        const bool awayWon = engine.state().awayScore > engine.state().homeScore;
+        const auto& winStats = awayWon ? engine.awayPitcherStats() : engine.homePitcherStats();
+        const auto& loseStats = awayWon ? engine.homePitcherStats() : engine.awayPitcherStats();
+        int wins = 0, losses = 0;
+        std::string winner, saver;
+        for (const auto& p : winStats) {
+            wins += p.wins;
+            if (p.wins) winner = p.name;
+            if (p.saves) saver = p.name;
+            CHECK(p.losses == 0);
+        }
+        for (const auto& p : loseStats) {
+            losses += p.losses;
+            CHECK(p.wins == 0 && p.saves == 0);
+            if (p.losses && p.gamesStarted > 0) ++starterLosses;
+        }
+        CHECK(wins == 1);
+        CHECK(losses == 1);
+        CHECK(saver.empty() || saver != winner);
+    }
+    // Before the fix a starter could never take a loss.
+    CHECK(starterLosses > 0);
+}
+
 } // namespace
 
 int main() {
@@ -508,6 +550,7 @@ int main() {
     testDraftKeepsRosterShape();
     testDraftPromotionRateIsReasonable();
     testDraftStrategyIsPluggable();
+    testPitcherDecisions();
     joji_tests::testJsonSyntaxChecker();
 
     if (joji_tests::failures > 0) {

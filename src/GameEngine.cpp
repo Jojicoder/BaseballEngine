@@ -1144,12 +1144,46 @@ void GameEngine::finalizeGameStats() {
     const bool awayWon = state_.awayScore > state_.homeScore;
     const bool homeWon = state_.homeScore > state_.awayScore;
 
-    // GamesFinished + Save + W (勝利チームの最終投手)
+    // 勝利・敗戦投手 (記録員の判断) ───────────────────────────────────────
+    // 勝利投手: 勝ったチームが最後にリードを奪ったときの自軍投手。
+    //   ただし先発が 5 回 (15 アウト) 未満なら、その後に登板した最初の救援に付ける。
+    // 敗戦投手: そのとき相手チームでマウンドにいた投手 (決勝点を許した投手)。
+    // セーブは勝利投手には付かない。
+    const std::size_t winnerIdx = awayWon ? 0 : 1;
+    std::string winPitcherName;
+    if (awayWon || homeWon) {
+        auto& winStats = awayWon ? awayPitcherStats_ : homePitcherStats_;
+        auto& loseStats = awayWon ? homePitcherStats_ : awayPitcherStats_;
+        const Player& winLast = awayWon ? currentAwayPitcher_ : currentHomePitcher_;
+        const Player& loseLast = awayWon ? currentHomePitcher_ : currentAwayPitcher_;
+
+        winPitcherName = winCandidate_[winnerIdx];
+        if (winPitcherName.empty()) winPitcherName = winLast.name;  // 念のため
+        for (std::size_t k = 0; k < winStats.size(); ++k) {
+            if (winStats[k].name == winPitcherName && winStats[k].gamesStarted > 0
+                && winStats[k].outsRecorded < 15 && k + 1 < winStats.size()) {
+                winPitcherName = winStats[k + 1].name;
+                break;
+            }
+        }
+        for (auto& p : winStats) {
+            if (p.name == winPitcherName) { p.wins++; break; }
+        }
+
+        std::string lossName = lossCandidate_[winnerIdx];
+        if (lossName.empty()) lossName = loseLast.name;  // 念のため
+        bool charged = false;
+        for (auto& p : loseStats) {
+            if (p.name == lossName) { p.losses++; charged = true; break; }
+        }
+        if (!charged) findOrAddPitcher(loseStats, loseLast, false).losses++;
+    }
+
+    // GamesFinished + Save (勝利チームの最終投手)
     auto finalizeLast = [&](const Player& lastPitcher,
                             PitcherSitTracker& sit,
                             std::vector<PitcherBoxScore>& pstats,
-                            bool pitchingTeamWon,
-                            bool starterPotentialWin) {
+                            bool pitchingTeamWon) {
         PitcherBoxScore& pbs = findOrAddPitcher(pstats, lastPitcher, false);
         pbs.gamesFinished++;
         pbs.inheritedRunners      += static_cast<int>(sit.inheritedRunners.size())
@@ -1159,57 +1193,30 @@ void GameEngine::finalizeGameStats() {
         if (sit.inSaveSit && sit.blownSave) {
             pbs.blownSaves++;
         } else if (sit.inSaveSit && pitchingTeamWon
-                   && pbs.outsRecorded > sit.outsAtEntry) {
+                   && pbs.outsRecorded > sit.outsAtEntry
+                   && pbs.name != winPitcherName) {   // W と SV は同じ投手に付かない
             pbs.saves++;
         }
-
-        if (pitchingTeamWon) {
-            if (starterPotentialWin) {
-                // 先発が 5 回以上投げてリードで降板 → 先発 W
-                for (auto& p : pstats) {
-                    if (p.gamesStarted > 0) { p.wins++; break; }
-                }
-            } else {
-                // 先発が資格なし → 最終登板投手 (bullpen) に W
-                pbs.wins++;
-            }
-        }
     };
+    finalizeLast(currentAwayPitcher_, awaySit_, awayPitcherStats_, awayWon);
+    finalizeLast(currentHomePitcher_, homeSit_, homePitcherStats_, homeWon);
+}
 
-    finalizeLast(currentAwayPitcher_, awaySit_, awayPitcherStats_, awayWon, awayStarterPotentialWin_);
-    finalizeLast(currentHomePitcher_, homeSit_, homePitcherStats_, homeWon, homeStarterPotentialWin_);
-
-    // Assign loss to the pitcher responsible (last pitcher for losing team)
-    if (awayWon) {
-        PitcherBoxScore& lp = findOrAddPitcher(homePitcherStats_, currentHomePitcher_, false);
-        lp.losses++;
-    } else if (homeWon) {
-        PitcherBoxScore& lp = findOrAddPitcher(awayPitcherStats_, currentAwayPitcher_, false);
-        lp.losses++;
-    }
+void GameEngine::noteRunScored() {
+    // 得点した直後。攻撃側が 1 点リードになった = ちょうど同点から (または逆転で) リードを奪った。
+    const bool awayBatting = state_.isTop;
+    const int diff = awayBatting ? state_.awayScore - state_.homeScore
+                                 : state_.homeScore - state_.awayScore;
+    if (diff != 1) return;
+    const std::size_t batIdx = awayBatting ? 0 : 1;
+    winCandidate_[batIdx]  = (awayBatting ? currentAwayPitcher_ : currentHomePitcher_).name;
+    lossCandidate_[batIdx] = (awayBatting ? currentHomePitcher_ : currentAwayPitcher_).name;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 
 void GameEngine::changePitcher(const Player& newPitcher, std::size_t bullpenIndex) {
     finalizePitcherSit();   // 旧投手の HLD/BS/IR を確定
-
-    // 先発 W 資格チェック: 5 回 (15 アウト) 以上投げてリードで降板
-    {
-        const auto& pstats = state_.isTop ? homePitcherStats_ : awayPitcherStats_;
-        for (const auto& pbs : pstats) {
-            if (pbs.name == currentPitcher().name && pbs.gamesStarted > 0
-                && pbs.outsRecorded >= 15) {
-                const int myScore  = state_.isTop ? state_.homeScore : state_.awayScore;
-                const int oppScore = state_.isTop ? state_.awayScore : state_.homeScore;
-                if (myScore > oppScore) {
-                    if (state_.isTop) homeStarterPotentialWin_ = true;
-                    else              awayStarterPotentialWin_ = true;
-                }
-                break;
-            }
-        }
-    }
 
     // 投手交代イベント: 理由を自動判定して記録 (SFML バナー用)
     {
