@@ -439,6 +439,74 @@ std::string teamSlug(const std::string& name) {
     return slug;
 }
 
+// ── Rest days and tired relievers (2027+) ───────────────────────────────────
+//
+// Until 2026 the same nine hitters played every game and the best relievers
+// pitched every day.  Games are simulated independently from a per-game seed,
+// so rest cannot be carried from one game to the next; it is rolled per game
+// instead (mt19937 is fully specified, so this is identical on every platform):
+//   * each lineup regular sits out with probability 1/12 (at most 2 per team);
+//     a bench player of the same kind (catcher / infielder / outfielder) starts
+//   * each reliever is unavailable with probability 1/2 (at least 4 stay available)
+constexpr unsigned kRestChanceDenominator = 12;
+constexpr std::size_t kMaxRestingRegulars = 2;
+constexpr unsigned kTiredRelieverChanceDenominator = 2;
+constexpr std::size_t kMinAvailableRelievers = 4;
+
+enum class PositionGroup { Catcher, Infield, Outfield, Other };
+
+PositionGroup positionGroup(joji::Position position) {
+    switch (position) {
+        case joji::Position::Catcher: return PositionGroup::Catcher;
+        case joji::Position::FirstBase:
+        case joji::Position::SecondBase:
+        case joji::Position::ThirdBase:
+        case joji::Position::Shortstop: return PositionGroup::Infield;
+        case joji::Position::LeftField:
+        case joji::Position::CenterField:
+        case joji::Position::RightField: return PositionGroup::Outfield;
+        default: return PositionGroup::Other;
+    }
+}
+
+void applyRestDays(joji::Team& team, uint32_t salt, std::vector<std::string>& unavailableRelievers) {
+    std::mt19937 rng(salt);
+
+    std::size_t resting = 0;
+    for (std::size_t lineupIdx = 0; lineupIdx < team.lineup().size() && resting < kMaxRestingRegulars; ++lineupIdx) {
+        if (rng() % kRestChanceDenominator != 0) continue;
+        const joji::Player& regular = team.lineup()[lineupIdx];
+        const PositionGroup group = positionGroup(regular.position);
+        if (group == PositionGroup::Other) continue;
+
+        // Best unused bench player of the same kind (exact position wins a tie).
+        std::optional<std::size_t> pick;
+        int pickScore = -1;
+        for (std::size_t b = 0; b < team.bench().size(); ++b) {
+            if (team.usedBench()[b]) continue;
+            const joji::Player& candidate = team.bench()[b];
+            if (positionGroup(candidate.position) != group) continue;
+            const int score = candidate.contact + candidate.fielding + (candidate.position == regular.position ? 25 : 0);
+            if (score > pickScore) {
+                pickScore = score;
+                pick = b;
+            }
+        }
+        if (!pick) continue;
+        team.sendPinchHitter(*pick, lineupIdx);
+        ++resting;
+    }
+
+    const auto& bullpen = team.bullpen();
+    std::size_t available = bullpen.size();
+    for (const auto& reliever : bullpen) {
+        if (available <= kMinAvailableRelievers) break;
+        if (rng() % kTiredRelieverChanceDenominator != 0) continue;
+        unavailableRelievers.push_back(reliever.name);
+        --available;
+    }
+}
+
 GameExport simulateGame(const std::vector<joji::Team>& baseTeams,
                         int awayIdx,
                         int homeIdx,
@@ -447,15 +515,25 @@ GameExport simulateGame(const std::vector<joji::Team>& baseTeams,
                         int awayStarterSlot,
                         int homeStarterSlot,
                         const std::string& date,
-                        const std::string& gameId) {
+                        const std::string& gameId,
+                        bool restDays) {
     joji::Team awayTeam = baseTeams[static_cast<std::size_t>(awayIdx)];
     joji::Team homeTeam = baseTeams[static_cast<std::size_t>(homeIdx)];
     awayTeam.setStarterSlot(awayStarterSlot);
     homeTeam.setStarterSlot(homeStarterSlot);
 
+    // From 2027: regulars sit out now and then and tired relievers are unavailable.
+    // Decided from the game seed alone, so a game is still reproducible by itself.
+    std::vector<std::string> unavailableRelievers;
+    if (restDays) {
+        applyRestDays(awayTeam, seed ^ 0xA5A5A5A5u, unavailableRelievers);
+        applyRestDays(homeTeam, seed ^ 0x5A5A5A5Au, unavailableRelievers);
+    }
+
     joji::GameEngine engine(awayTeam, homeTeam, joji::Random{std::optional<uint32_t>{seed}},
                             joji::GameRules{}, homeTeam.homeBallpark());
     engine.setFastMode(false);
+    for (const auto& name : unavailableRelievers) engine.markRelieverUnavailable(name);
     joji::BallPhysicsEngine physics;
 
     std::vector<std::string> events;
@@ -875,7 +953,8 @@ std::vector<GameExport> simulateRange(const std::vector<joji::Team>& teams,
             gameNumberText;
         const uint32_t seed = static_cast<uint32_t>(season * 100000 + gameNumber);
         games.push_back(simulateGame(teams, sg.awayIdx, sg.homeIdx, season, seed,
-                                     awaySlot, homeSlot, dateForDay(season, sg.dayIndex), gameId));
+                                     awaySlot, homeSlot, dateForDay(season, sg.dayIndex), gameId,
+                                     /*restDays=*/season >= 2027));
     }
 
     return games;
@@ -1193,7 +1272,7 @@ SeriesResult playSeries(const std::vector<joji::Team>& teams,
         const std::string gameId = std::to_string(season) + "-P-" + id + "-G" + std::to_string(g);
         const uint32_t seed = static_cast<uint32_t>(season * 100000 + 90000 + seriesNo * 10 + g);
         GameExport game = simulateGame(teams, awayIdx, homeIdx, season, seed, awaySlot, homeSlot,
-                                       addDays(firstDate, g - 1), gameId);
+                                       addDays(firstDate, g - 1), gameId, /*restDays=*/false);
         game.gameFile = "playoffs/games/" + gameId + ".json";
 
         if (game.awayScore == game.homeScore) {
@@ -1491,7 +1570,7 @@ int main(int argc, char* argv[]) {
         const GameExport game = simulateGame(teams, awayIdx, homeIdx, 0, seed,
                                              static_cast<int>(seed % 5),
                                              static_cast<int>((seed + 2) % 5),
-                                             todayDate(), "game-" + std::to_string(seed));
+                                             todayDate(), "game-" + std::to_string(seed), /*restDays=*/false);
         std::cout << game.json;
         return 0;
     } catch (const std::exception& ex) {

@@ -59,6 +59,8 @@ public:
     void simulate(std::ostream& out);
     // 連投疲労マップ: pitcher name → 前回登板からの休養日数 (0=前日登板)
     void setFatigueMap(std::map<std::string, int> daysSinceLastPitch);
+    // 連投などで今日は使えない救援投手を指定する (両チームの bullpen から名前で探す)。
+    void markRelieverUnavailable(const std::string& name);
     // Hot/Cold ストリーク: player name → contact 補正値 (-5〜+5)
     void setStreakMap(std::map<std::string, double> streaks);
     // Fast mode: double physics timestep + skip trajectory recording (season sim only)

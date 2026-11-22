@@ -1718,6 +1718,17 @@ void GameEngine::setFatigueMap(std::map<std::string, int> m) {
     fatigueMap_ = std::move(m);
 }
 
+void GameEngine::markRelieverUnavailable(const std::string& name) {
+    auto mark = [&name](const Team& team, std::vector<bool>& used) {
+        const auto& bullpen = team.bullpen();
+        for (std::size_t i = 0; i < bullpen.size(); ++i) {
+            if (bullpen[i].name == name) used[i] = true;
+        }
+    };
+    mark(awayTeam_, awayBullpenUsed_);
+    mark(homeTeam_, homeBullpenUsed_);
+}
+
 void GameEngine::setStreakMap(std::map<std::string, double> m) {
     streakMap_ = std::move(m);
 }
