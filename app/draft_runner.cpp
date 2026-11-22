@@ -8,6 +8,7 @@
 
 #include "DraftEngine.h"
 #include "JsonExporter.h"
+#include "ProgressionEngine.h"
 #include "Teams.h"
 
 #include <filesystem>
@@ -166,6 +167,23 @@ std::string changesJson(const joji::DraftResult& result) {
     return out.str();
 }
 
+std::string progressionJson(const joji::ProgressionResult& result) {
+    std::ostringstream out;
+    out << "{\n  \"schemaVersion\":1,\n  \"season\":" << result.season
+        << ",\n  \"seed\":" << result.seed << ",\n  \"changes\":[\n";
+    for (std::size_t i = 0; i < result.changes.size(); ++i) {
+        const auto& c = result.changes[i];
+        out << "    {\"team\":" << joji::jsonString(c.team) << ",\"player\":" << joji::jsonString(c.player)
+            << ",\"pitcher\":" << (c.isPitcher ? "true" : "false")
+            << ",\"ageBefore\":" << c.ageBefore << ",\"ageAfter\":" << c.ageAfter
+            << ",\"overallBefore\":" << c.overallBefore << ",\"overallAfter\":" << c.overallAfter
+            << ",\"developing\":" << (c.developing ? "true" : "false") << "}"
+            << (i + 1 < result.changes.size() ? "," : "") << "\n";
+    }
+    out << "  ]\n}\n";
+    return out.str();
+}
+
 Options parseArgs(int argc, char* argv[]) {
     Options opts;
     for (int i = 1; i < argc; ++i) {
@@ -196,14 +214,21 @@ int main(int argc, char* argv[]) {
         config.rounds = opts.rounds;
         if (opts.margin > -1000) config.promotionMargin = opts.margin;
 
-        const auto teams = joji::allTeams();
-        joji::DraftResult result = joji::runDraft(teams, config);
-        joji::applyDraftToRosters(teams, result, config);
+        // The draft runs on the rosters as they stand that offseason (earlier drafts and aging
+        // included), exactly as game_export --draft builds them.
+        joji::SeasonRosterOptions rosterOptions;
+        rosterOptions.rounds = config.rounds;
+        rosterOptions.promotionMargin = config.promotionMargin;
+        rosterOptions.draftSeed = config.seed;
+        joji::SeasonRosters rosters = joji::buildSeasonRosters(joji::allTeams(), opts.season, rosterOptions);
+        joji::DraftResult& result = rosters.draft;
 
         const std::filesystem::path root = std::filesystem::path(opts.outDir) / "draft";
         writeTextFile(root / "draft.json", draftJson(result));
         writeTextFile(root / "prospects.json", prospectsJson(result));
         writeTextFile(root / "roster-changes.json", changesJson(result));
+        writeTextFile(std::filesystem::path(opts.outDir) / "progression" / "progression.json",
+                      progressionJson(rosters.progression));
 
         int promoted = 0;
         int minors = 0;

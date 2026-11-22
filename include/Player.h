@@ -116,6 +116,11 @@ struct Player {
 
     // Roster role — set after construction via withRole(); used for trade valuation
     PlayerRole role = PlayerRole::ContactHitter;
+
+    // Development (drafted rookies only; 0/0 = an established player on the age curve).
+    // readiness = current tier, potential = ceiling tier; see ProgressionEngine.h.
+    int potential = 0;
+    int readiness = 0;
 };
 
 } // namespace joji

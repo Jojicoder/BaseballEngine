@@ -222,6 +222,8 @@ DraftProspect makeProspect(int id, Random& rng, std::set<std::string>& used) {
 
     prospect.position = p.position;
     prospect.role = p.role;
+    p.potential = prospect.potential;
+    p.readiness = prospect.readiness;
     prospect.asPlayer = p;
     prospect.overall = playerOverall(p);
     return prospect;

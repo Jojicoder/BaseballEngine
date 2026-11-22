@@ -5,6 +5,7 @@
 #include "GameEngine.h"
 #include "JsonExporter.h"
 #include "PlayResolutionEngine.h"
+#include "ProgressionEngine.h"
 #include "Random.h"
 #include "RunExpectancy.h"
 #include "Teams.h"
@@ -533,6 +534,154 @@ void testPitcherDecisions() {
     CHECK(starterLosses > 0);
 }
 
+// ── Progression (aging & rookie development) ──────────────────────────────────
+
+std::string rosterFingerprint(const std::vector<joji::Team>& teams) {
+    std::string out;
+    for (const auto& team : teams) {
+        auto add = [&](const std::vector<joji::Player>& group) {
+            for (const auto& p : group) {
+                out += p.name + ":" + std::to_string(p.age) + ":" + std::to_string(p.contact) + ":" +
+                       std::to_string(p.power) + ":" + std::to_string(p.pitchingVelocity) + ":" +
+                       std::to_string(p.pitchingStuff) + ":" + std::to_string(p.pitchingStamina) + ";";
+            }
+        };
+        add(team.lineup());
+        add(team.rotation());
+        add(team.bullpen());
+        add(team.bench());
+        out += "|";
+    }
+    return out;
+}
+
+void testProgressionDeterministicAndShaped() {
+    const auto teams = joji::allTeams();
+    joji::ProgressionConfig config;
+    config.seed = 11;
+    joji::ProgressionResult first, second, other;
+    const auto a = joji::advanceOneYear(teams, config, first);
+    const auto b = joji::advanceOneYear(teams, config, second);
+    CHECK(rosterFingerprint(a) == rosterFingerprint(b));
+    config.seed = 12;
+    const auto c = joji::advanceOneYear(teams, config, other);
+    CHECK(rosterFingerprint(a) != rosterFingerprint(c));
+
+    // Same sizes, everyone a year older, ratings in range.
+    for (std::size_t t = 0; t < teams.size(); ++t) {
+        CHECK(a[t].lineup().size() == teams[t].lineup().size());
+        CHECK(a[t].rotation().size() == teams[t].rotation().size());
+        CHECK(a[t].bullpen().size() == teams[t].bullpen().size());
+        CHECK(a[t].bench().size() == teams[t].bench().size());
+        for (std::size_t i = 0; i < teams[t].lineup().size(); ++i) {
+            CHECK(a[t].lineup()[i].age == teams[t].lineup()[i].age + 1);
+            CHECK(a[t].lineup()[i].contact >= 30 && a[t].lineup()[i].contact <= 95);
+        }
+        for (std::size_t i = 0; i < teams[t].rotation().size(); ++i) {
+            CHECK(a[t].rotation()[i].pitchingStuff >= 30 && a[t].rotation()[i].pitchingStuff <= 95);
+        }
+    }
+
+    // Players in `skip` are copied unchanged.
+    std::set<std::string> skip{teams[0].lineup()[0].name};
+    joji::ProgressionResult skipped;
+    const auto d = joji::advanceOneYear(teams, config, skipped, skip);
+    CHECK(d[0].lineup()[0].age == teams[0].lineup()[0].age);
+    CHECK(d[0].lineup()[0].contact == teams[0].lineup()[0].contact);
+}
+
+void testProgressionAgeCurve() {
+    // Over several years the young improve and the old decline, on average.
+    std::vector<joji::Team> teams = joji::allTeams();
+    double youngBefore = 0, youngAfter = 0, oldBefore = 0, oldAfter = 0;
+    int young = 0, old = 0;
+    joji::ProgressionConfig config;
+    for (int year = 0; year < 3; ++year) {
+        config.seed = 100u + static_cast<unsigned>(year);
+        joji::ProgressionResult result;
+        teams = joji::advanceOneYear(teams, config, result);
+        for (const auto& change : result.changes) {
+            if (change.ageBefore <= 23) { youngBefore += change.overallBefore; youngAfter += change.overallAfter; ++young; }
+            if (change.ageBefore >= 34) { oldBefore += change.overallBefore; oldAfter += change.overallAfter; ++old; }
+        }
+    }
+    CHECK(young > 10 && old > 10);
+    CHECK(youngAfter / young > youngBefore / young);
+    CHECK(oldAfter / old < oldBefore / old);
+}
+
+void testRookiesDevelopTowardPotential() {
+    // Rookies from a draft grow toward their ceiling and stop at it.
+    const auto base = joji::allTeams();
+    joji::DraftConfig draftConfig;
+    draftConfig.seed = 3;
+    joji::DraftResult draft = joji::runDraft(base, draftConfig);
+    std::vector<joji::Team> teams = joji::applyDraftToRosters(base, draft, draftConfig);
+
+    std::map<std::string, std::pair<int, int>> developing;  // name -> {potential, readiness}
+    for (const auto& team : teams) {
+        for (const auto* group : {&team.bullpen(), &team.bench()}) {
+            for (const auto& p : *group) {
+                if (p.potential > p.readiness) developing[p.name] = {p.potential, p.readiness};
+            }
+        }
+    }
+    CHECK(!developing.empty());
+
+    double overallBefore = 0;
+    for (const auto& team : teams) {
+        for (const auto* group : {&team.bullpen(), &team.bench()}) {
+            for (const auto& p : *group) if (developing.count(p.name)) overallBefore += joji::playerOverall(p);
+        }
+    }
+    joji::ProgressionConfig config;
+    for (int year = 0; year < 4; ++year) {
+        config.seed = 7u + static_cast<unsigned>(year);
+        joji::ProgressionResult result;
+        teams = joji::advanceOneYear(teams, config, result);
+    }
+    double overallAfter = 0;
+    for (const auto& team : teams) {
+        for (const auto* group : {&team.bullpen(), &team.bench()}) {
+            for (const auto& p : *group) {
+                const auto it = developing.find(p.name);
+                if (it == developing.end()) continue;
+                overallAfter += joji::playerOverall(p);
+                CHECK(p.readiness >= it->second.second);
+                CHECK(p.readiness <= it->second.first);  // never past the ceiling
+            }
+        }
+    }
+    CHECK(overallAfter > overallBefore);
+}
+
+void testSeasonRostersFollowTheDraft() {
+    const auto base = joji::allTeams();
+    // 2026 is the hand-written roster, untouched.
+    const auto s2026 = joji::buildSeasonRosters(base, 2026);
+    CHECK(rosterFingerprint(s2026.teams) == rosterFingerprint(base));
+    CHECK(s2026.draft.picks.empty());
+
+    // The first offseason drafts from the 2026 rosters, so the draft equals a plain draft.
+    const auto s2027 = joji::buildSeasonRosters(base, 2027);
+    joji::DraftConfig config;
+    config.season = 2027;
+    config.seed = 2027;
+    const joji::DraftResult plain = joji::runDraft(base, config);
+    CHECK(s2027.draft.picks.size() == plain.picks.size());
+    bool same = true;
+    for (std::size_t i = 0; i < plain.picks.size(); ++i) {
+        same = same && s2027.draft.picks[i].prospectId == plain.picks[i].prospectId &&
+               s2027.draft.picks[i].team == plain.picks[i].team;
+    }
+    CHECK(same);
+    CHECK(rosterFingerprint(s2027.teams) != rosterFingerprint(base));
+
+    // Rebuilding gives the same rosters.
+    CHECK(rosterFingerprint(joji::buildSeasonRosters(base, 2029).teams) ==
+          rosterFingerprint(joji::buildSeasonRosters(base, 2029).teams));
+}
+
 } // namespace
 
 int main() {
@@ -551,6 +700,10 @@ int main() {
     testDraftPromotionRateIsReasonable();
     testDraftStrategyIsPluggable();
     testPitcherDecisions();
+    testProgressionDeterministicAndShaped();
+    testProgressionAgeCurve();
+    testRookiesDevelopTowardPotential();
+    testSeasonRostersFollowTheDraft();
     joji_tests::testJsonSyntaxChecker();
 
     if (joji_tests::failures > 0) {

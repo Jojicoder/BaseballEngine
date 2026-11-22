@@ -25,6 +25,7 @@
 #include "DraftEngine.h"
 #include "GameEngine.h"
 #include "JsonExporter.h"
+#include "ProgressionEngine.h"
 #include "SeasonDates.h"
 #include "Teams.h"
 
@@ -1170,25 +1171,24 @@ void writeTextFile(const std::filesystem::path& path, const std::string& content
     out << contents;
 }
 
-// The rosters a season is played with: the hand-authored teams, optionally after
-// that season's draft (see include/DraftEngine.h).
+// The rosters a season is played with: the hand-authored teams (2026), or, with --draft,
+// the result of every offseason since then (draft, then everyone ages a year).
+// See include/ProgressionEngine.h.
 std::vector<joji::Team> loadTeams(const CliOptions& opts) {
     std::vector<joji::Team> teams = joji::allTeams();
     if (!opts.draft) return teams;
 
-    joji::DraftConfig config;
-    config.season = opts.season;
-    config.seed = opts.draftSeed.value_or(static_cast<unsigned>(opts.season));
-    joji::DraftResult draft = joji::runDraft(teams, config);
-    std::vector<joji::Team> drafted = joji::applyDraftToRosters(teams, draft, config);
+    joji::SeasonRosterOptions options;
+    options.draftSeed = opts.draftSeed;
+    joji::SeasonRosters rosters = joji::buildSeasonRosters(teams, opts.season, options);
 
     int promoted = 0;
-    for (const auto& change : draft.changes) {
+    for (const auto& change : rosters.draft.changes) {
         if (change.type == joji::RosterChangeType::Promoted) ++promoted;
     }
-    std::cerr << "Draft " << config.season << " (seed " << config.seed << "): " << promoted
-              << " rookies made a roster.\n";
-    return drafted;
+    std::cerr << "Draft " << opts.season << " (seed " << rosters.draft.seed << "): " << promoted
+              << " rookies made a roster; " << rosters.progression.changes.size() << " players aged.\n";
+    return rosters.teams;
 }
 
 // ── Postseason (MLB format) ─────────────────────────────────────────────────

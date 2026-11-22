@@ -29,6 +29,7 @@ ENGINE_SOURCES := \
 	../src/SwingDecisionEngine.cpp \
 	../src/SwingEngine.cpp \
 	../src/DraftEngine.cpp \
+	../src/ProgressionEngine.cpp \
 	../src/Teams.cpp \
 	../src/ZoneJudge.cpp
 SOURCES := main.cpp \
