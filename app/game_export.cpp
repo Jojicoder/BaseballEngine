@@ -1187,7 +1187,7 @@ std::vector<joji::Team> loadTeams(const CliOptions& opts) {
         if (change.type == joji::RosterChangeType::Promoted) ++promoted;
     }
     std::cerr << "Draft " << opts.season << " (seed " << rosters.draft.seed << "): " << promoted
-              << " rookies made a roster; " << rosters.progression.changes.size() << " players aged.\n";
+              << " rookies made a roster; " << rosters.progression.changes.size() << " players aged; " << rosters.progression.retirements.size() << " retired.\n";
     return rosters.teams;
 }
 

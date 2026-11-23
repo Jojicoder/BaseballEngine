@@ -180,6 +180,15 @@ std::string progressionJson(const joji::ProgressionResult& result) {
             << ",\"developing\":" << (c.developing ? "true" : "false") << "}"
             << (i + 1 < result.changes.size() ? "," : "") << "\n";
     }
+    out << "  ],\n  \"retirements\":[\n";
+    for (std::size_t i = 0; i < result.retirements.size(); ++i) {
+        const auto& r = result.retirements[i];
+        out << "    {\"team\":" << joji::jsonString(r.team) << ",\"player\":" << joji::jsonString(r.player)
+            << ",\"pitcher\":" << (r.isPitcher ? "true" : "false") << ",\"age\":" << r.age
+            << ",\"overall\":" << r.overall << ",\"slot\":" << joji::jsonString(r.slot)
+            << ",\"replacement\":" << joji::jsonString(r.replacement) << "}"
+            << (i + 1 < result.retirements.size() ? "," : "") << "\n";
+    }
     out << "  ]\n}\n";
     return out.str();
 }

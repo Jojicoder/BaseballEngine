@@ -199,6 +199,178 @@ std::vector<Team> reshuffleDepth(const std::vector<Team>& teams, ProgressionResu
     return updated;
 }
 
+double retirementChance(int age, int overall) {
+    double base = 0.0;
+    if (age >= 41) base = 1.0;
+    else if (age == 40) base = 0.8;
+    else if (age == 39) base = 0.6;
+    else if (age == 38) base = 0.42;
+    else if (age == 37) base = 0.28;
+    else if (age == 36) base = 0.17;
+    else if (age == 35) base = 0.09;
+    else if (age == 34) base = 0.04;
+    else return 0.0;
+    // Stars hang on a little longer, washed-up veterans leave sooner.
+    base += (60 - overall) * 0.01;
+    return std::clamp(base, 0.0, 1.0);
+}
+
+namespace {
+
+// Retires aging players and fills their spots from this year's undrafted / minors prospects.
+std::vector<Team> retirePlayers(const std::vector<Team>& teams, const DraftResult& draft,
+                                ProgressionResult& result, unsigned seed) {
+    std::vector<bool> taken(draft.pool.size(), false);
+    for (const auto& pick : draft.picks) {
+        for (std::size_t i = 0; i < draft.pool.size(); ++i) {
+            if (draft.pool[i].id == pick.prospectId) taken[i] = true;
+        }
+    }
+    std::set<int> promoted;
+    for (const auto& change : draft.changes) {
+        if (change.type == RosterChangeType::Promoted) promoted.insert(change.prospectId);
+    }
+
+    std::vector<Team> updated;
+    updated.reserve(teams.size());
+    for (std::size_t t = 0; t < teams.size(); ++t) {
+        const Team& team = teams[t];
+        Random rng{std::optional<std::uint32_t>{seed * 6151u + static_cast<std::uint32_t>(t) * 92821u + 5u}};
+
+        std::vector<Player> lineup = team.lineup();
+        std::vector<Player> rotation = team.rotation();
+        std::vector<Player> bullpen = team.bullpen();
+        std::vector<Player> bench = team.bench();
+
+        // Candidate prospects: this team's own picks that did not make the roster, then the undrafted pool.
+        std::vector<std::size_t> candidates;
+        for (const auto& pick : draft.picks) {
+            if (pick.teamIdx != static_cast<int>(t) || promoted.count(pick.prospectId)) continue;
+            for (std::size_t i = 0; i < draft.pool.size(); ++i) {
+                if (draft.pool[i].id == pick.prospectId) candidates.push_back(i);
+            }
+        }
+        std::vector<bool> used(draft.pool.size(), false);
+        auto takeProspect = [&](bool pitcher, const Position* position) -> const Player* {
+            auto tryList = [&](bool ownOnly) -> const Player* {
+                std::size_t bestIdx = draft.pool.size();
+                int bestOverall = -1;
+                auto consider = [&](std::size_t i) {
+                    if (used[i]) return;
+                    const Player& p = draft.pool[i].asPlayer;
+                    if ((p.position == Position::Pitcher) != pitcher) return;
+                    if (position && !pitcher && p.position != *position) return;
+                    if (draft.pool[i].overall > bestOverall) {
+                        bestOverall = draft.pool[i].overall;
+                        bestIdx = i;
+                    }
+                };
+                if (ownOnly) {
+                    for (std::size_t i : candidates) consider(i);
+                } else {
+                    for (std::size_t i = 0; i < draft.pool.size(); ++i) {
+                        if (!taken[i]) consider(i);
+                    }
+                }
+                if (bestIdx == draft.pool.size()) return nullptr;
+                used[bestIdx] = true;
+                return &draft.pool[bestIdx].asPlayer;
+            };
+            if (const Player* p = tryList(true)) return p;
+            return tryList(false);
+        };
+
+        auto retires = [&](const Player& p) { return rng.real(0.0, 1.0) < retirementChance(p.age, playerOverall(p)); };
+        auto record = [&](const Player& p, const char* slot, const std::string& replacement) {
+            result.retirements.push_back(
+                {team.name(), p.name, p.position == Position::Pitcher, p.age, playerOverall(p), slot, replacement});
+        };
+
+        // Bench / bullpen first: the prospect takes the vacated seat (and its role).
+        for (auto& p : bench) {
+            if (!retires(p)) continue;
+            const Player* rookie = takeProspect(false, nullptr);
+            if (!rookie) continue;
+            Player incoming = *rookie;
+            incoming.role = p.role;
+            record(p, "bench", incoming.name);
+            p = incoming;
+        }
+        for (auto& p : bullpen) {
+            if (!retires(p)) continue;
+            const Player* rookie = takeProspect(true, nullptr);
+            if (!rookie) continue;
+            Player incoming = *rookie;
+            incoming.role = p.role;
+            incoming.pitcherRole = p.pitcherRole;
+            record(p, "bullpen", incoming.name);
+            p = incoming;
+        }
+        // Starters: the best bench/bullpen player takes the job; the prospect fills the seat that opened.
+        for (auto& p : lineup) {
+            if (!retires(p)) continue;
+            int best = -1, bestOverall = -1;
+            for (std::size_t j = 0; j < bench.size(); ++j) {
+                if (bench[j].position != p.position) continue;
+                const int overall = playerOverall(bench[j]);
+                if (overall > bestOverall) { bestOverall = overall; best = static_cast<int>(j); }
+            }
+            if (best >= 0) {
+                const Player* rookie = takeProspect(false, nullptr);
+                if (!rookie) continue;
+                Player incoming = bench[static_cast<std::size_t>(best)];
+                incoming.role = p.role;
+                Player seat = *rookie;
+                seat.role = bench[static_cast<std::size_t>(best)].role;
+                record(p, "lineup", incoming.name);
+                p = incoming;
+                bench[static_cast<std::size_t>(best)] = seat;
+            } else {
+                const Player* rookie = takeProspect(false, &p.position);
+                if (!rookie) continue;
+                Player incoming = *rookie;
+                incoming.role = p.role;
+                record(p, "lineup", incoming.name);
+                p = incoming;
+            }
+        }
+        for (auto& p : rotation) {
+            if (!retires(p)) continue;
+            int best = -1, bestOverall = -1;
+            for (std::size_t j = 0; j < bullpen.size(); ++j) {
+                if (bullpen[j].pitchingStamina < kStarterMinStamina) continue;
+                const int overall = pitcherOverallAs(bullpen[j], PitcherRole::Starter);
+                if (overall > bestOverall) { bestOverall = overall; best = static_cast<int>(j); }
+            }
+            const Player* rookie = takeProspect(true, nullptr);
+            if (!rookie) continue;
+            if (best >= 0) {
+                Player incoming = bullpen[static_cast<std::size_t>(best)];
+                incoming.role = p.role;
+                incoming.pitcherRole = p.pitcherRole;
+                Player seat = *rookie;
+                seat.role = bullpen[static_cast<std::size_t>(best)].role;
+                seat.pitcherRole = bullpen[static_cast<std::size_t>(best)].pitcherRole;
+                record(p, "rotation", incoming.name);
+                p = incoming;
+                bullpen[static_cast<std::size_t>(best)] = seat;
+            } else {
+                Player incoming = *rookie;
+                incoming.role = p.role;
+                incoming.pitcherRole = p.pitcherRole;
+                record(p, "rotation", incoming.name);
+                p = incoming;
+            }
+        }
+
+        updated.emplace_back(team.name(), std::move(lineup), std::move(rotation), std::move(bullpen),
+                             std::move(bench), team.homeBallpark(), team.league());
+    }
+    return updated;
+}
+
+} // namespace
+
 SeasonRosters buildSeasonRosters(const std::vector<Team>& base, int season, const SeasonRosterOptions& options) {
     SeasonRosters out;
     out.teams = base;
@@ -222,7 +394,9 @@ SeasonRosters buildSeasonRosters(const std::vector<Team>& base, int season, cons
         progressionConfig.seed = static_cast<unsigned>(year) * 31u + 7u;
         ProgressionResult progression;
         std::vector<Team> aged = advanceOneYear(drafted, progressionConfig, progression, newRookies);
-        out.teams = reshuffleDepth(aged, progression);
+        // Retirements first (a retiree's job goes to the best backup), then the depth reshuffle.
+        std::vector<Team> retired = retirePlayers(aged, draft, progression, progressionConfig.seed);
+        out.teams = reshuffleDepth(retired, progression);
 
         if (year == season) {
             out.draft = std::move(draft);

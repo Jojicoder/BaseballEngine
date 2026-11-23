@@ -682,6 +682,36 @@ void testSeasonRostersFollowTheDraft() {
           rosterFingerprint(joji::buildSeasonRosters(base, 2029).teams));
 }
 
+void testRetirements() {
+    CHECK(joji::retirementChance(30, 60) == 0.0);
+    CHECK(joji::retirementChance(36, 60) < joji::retirementChance(39, 60));
+    CHECK(joji::retirementChance(37, 75) < joji::retirementChance(37, 50));  // stars stay longer
+    CHECK(joji::retirementChance(42, 90) >= 0.99 || joji::retirementChance(42, 90) > 0.5);
+
+    const auto base = joji::allTeams();
+    const auto rosters = joji::buildSeasonRosters(base, 2034);
+    CHECK(!rosters.progression.retirements.empty());
+    for (const auto& team : rosters.teams) {
+        CHECK(team.lineup().size() == 9 && team.rotation().size() == 5);
+        CHECK(team.bullpen().size() == 8 && team.bench().size() == 5);
+    }
+    // A retiree is gone from his team and his replacement is on it.
+    for (const auto& r : rosters.progression.retirements) {
+        for (const auto& team : rosters.teams) {
+            if (team.name() != r.team) continue;
+            bool retireeThere = false, replacementThere = false;
+            for (const auto* group : {&team.lineup(), &team.rotation(), &team.bullpen(), &team.bench()}) {
+                for (const auto& p : *group) {
+                    retireeThere = retireeThere || p.name == r.player;
+                    replacementThere = replacementThere || p.name == r.replacement;
+                }
+            }
+            CHECK(!retireeThere);
+            CHECK(replacementThere);
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -702,6 +732,7 @@ int main() {
     testPitcherDecisions();
     testProgressionDeterministicAndShaped();
     testProgressionAgeCurve();
+    testRetirements();
     testRookiesDevelopTowardPotential();
     testSeasonRostersFollowTheDraft();
     joji_tests::testJsonSyntaxChecker();

@@ -23,6 +23,11 @@ namespace joji {
 // than a starter (by `kDepthMargin` overall) takes the job, so a developed rookie can win a
 // starting spot and the league does not just wear out as its regulars age.
 //
+// Retirement (see retirementChance): from 34 on, a player may retire after the ratings move; the
+// older and weaker, the likelier.  His starting job goes to the best bench/bullpen player, and the
+// vacated bench/bullpen spot is filled by a prospect drafted that year who did not make a roster
+// (the team's own first, then the undrafted pool).  Roster sizes never change.
+//
 // Rookies who join this offseason do not age or grow in the year they arrive.
 // Everything is driven by ProgressionConfig::seed, so the same inputs always give
 // the same result (no std::*_distribution: output is identical on every platform).
@@ -53,11 +58,24 @@ struct DepthMove {
     int demotedOverall = 0;
 };
 
+// A player who left the game after aging.  `replacement` is the drafted prospect who filled the
+// vacated roster spot (after any bench/bullpen player took over the starting job).
+struct Retirement {
+    std::string team;
+    std::string player;
+    bool isPitcher = false;
+    int age = 0;
+    int overall = 0;
+    std::string slot;         // "lineup" | "rotation" | "bullpen" | "bench"
+    std::string replacement;  // the prospect who joined the roster
+};
+
 struct ProgressionResult {
     int season = 0;
     unsigned seed = 0;
     std::vector<ProgressionChange> changes;
     std::vector<DepthMove> moves;
+    std::vector<Retirement> retirements;
 };
 
 // Returns the teams one year later.  Roster sizes never change.  Players whose name is in
@@ -88,6 +106,9 @@ struct SeasonRosters {
     DraftResult draft;               // the target season's draft (empty for seasons <= 2026)
     ProgressionResult progression;   // the target season's aging (empty for seasons <= 2026)
 };
+
+// Chance that a player of `age` and `overall` retires this offseason.
+double retirementChance(int age, int overall);
 
 SeasonRosters buildSeasonRosters(const std::vector<Team>& base, int season,
                                  const SeasonRosterOptions& options = {});
